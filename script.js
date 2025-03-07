@@ -319,9 +319,23 @@ function updateFolderSelects() {
         const select = $(selector);
         select.empty();
         
-        // Add all folders
+        // Add "Default Library" as the first option, this is the true default folder
+        select.append(`<option value="default">Default Library</option>`);
+        
+        // Add "Current Folder" option if we have a current folder that's not default or trash
+        if (currentFolderId && currentFolderId !== 'default' && currentFolderId !== TRASH_FOLDER_ID) {
+            const currentFolder = allFolders.find(f => f.id === currentFolderId);
+            if (currentFolder) {
+                select.append(`<option value="${currentFolderId}">Current Folder (${currentFolder.name})</option>`);
+            }
+        }
+        
+        // Add all folders except trash
         allFolders.forEach(folder => {
-            select.append(`<option value="${folder.id}">${folder.name}</option>`);
+            // Skip default (already added), trash, and the current folder (already added if applicable)
+            if (folder.id !== 'default' && folder.id !== TRASH_FOLDER_ID && folder.id !== currentFolderId) {
+                select.append(`<option value="${folder.id}">${folder.name}</option>`);
+            }
         });
     });
 }
@@ -1056,7 +1070,16 @@ $('#resetFilters').click(function() {
 function handleFileUpload() {
     // Clear the form
     $('#modalUploadForm')[0].reset();
-    $('#modal_uploadFolderId').val(currentFolderId || 'default');
+    
+    // Store the current folder ID in the hidden input
+    const folderToUse = currentFolderId || 'default';
+    $('#modal_uploadFolderId').val(folderToUse);
+    
+    // Update folder select options
+    updateFolderSelects();
+    
+    // Now set the selected option to match the current folder
+    $('#modal_folderSelect').val(folderToUse);
     
     // Initialize Select2 for tags
     $('#modal_tags').select2({
