@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Research Papers Manager</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <style>
+        .paper-card {
+            transition: transform 0.2s;
+        }
+        .paper-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .stats-card {
+            background: linear-gradient(145deg, #f8f9fa 0%, #e9ecef 100%);
+        }
+        /* Folder tree styles */
+        .folder-tree {
+            max-height: calc(100vh - 230px);
+            overflow-y: auto;
+        }
+        .folder-item {
+            cursor: pointer;
+            padding: 5px 8px;
+            border-radius: 4px;
+            margin-bottom: 2px;
+        }
+        .folder-item:hover {
+            background-color: #f0f0f0;
+        }
+        .folder-item.active {
+            background-color: #e9ecef;
+            font-weight: bold;
+        }
+        .folder-item .folder-actions {
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .folder-item:hover .folder-actions {
+            opacity: 1;
+        }
+        .nested-folders {
+            margin-left: 20px;
+        }
+        .folder-toggle {
+            cursor: pointer;
+            margin-right: 5px;
+        }
+        .drag-over {
+            background-color: #e3f2fd;
+            border: 1px dashed #90caf9;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">Research Papers Manager</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="showDashboard()">Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="showUploadForm()">Upload Paper</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <div class="row">
+            <!-- Left Sidebar - Folder Structure -->
+            <div class="col-md-3 col-lg-2">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <strong>Folders</strong>
+                        <button class="btn btn-sm btn-outline-primary" onclick="showCreateFolderModal()">
+                            <i class="bi bi-plus"></i> New
+                        </button>
+                    </div>
+                    <div class="card-body p-2">
+                        <div id="folderTree" class="folder-tree">
+                            <div class="folder-item" onclick="showAllPapers()" id="allPapersFolder">
+                                <i class="bi bi-journals"></i> All Papers
+                            </div>
+                            <div id="foldersContainer">
+                                <!-- Folders will be dynamically added here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Content Area -->
+            <div class="col-md-9 col-lg-10">
+                <!-- Dashboard View -->
+                <div id="dashboard">
+                    <div class="row mb-4">
+                        <div class="col-md-3">
+                            <div class="card stats-card">
+                                <div class="card-body">
+                                    <h5 class="card-title">Total Papers</h5>
+                                    <h2 id="totalPapers">0</h2>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card stats-card">
+                                <div class="card-body">
+                                    <h5 class="card-title">Categories</h5>
+                                    <h2 id="totalCategories">0</h2>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card stats-card">
+                                <div class="card-body">
+                                    <h5 class="card-title">Total Tags</h5>
+                                    <h2 id="totalTags">0</h2>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card stats-card">
+                                <div class="card-body">
+                                    <h5 class="card-title">Years Span</h5>
+                                    <h2 id="yearsSpan">-</h2>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <input type="text" id="searchInput" class="form-control" placeholder="Search papers...">
+                        </div>
+                        <div class="col-md-3">
+                            <select id="categoryFilter" class="form-control">
+                                <option value="">All Categories</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <select id="tagFilter" class="form-control">
+                                <option value="">All Tags</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <h4 id="currentViewTitle">All Papers</h4>
+
+                    <div id="papersList" class="row">
+                        <!-- Papers will be displayed here -->
+                    </div>
+                </div>
+
+                <!-- Upload Form -->
+                <div id="uploadForm" style="display: none;">
+                    <div class="card">
+                        <div class="card-body">
+                            <h3 class="card-title">Upload New Paper</h3>
+                            <form id="paperUploadForm">
+                                <div class="mb-3">
+                                    <label for="pdfFile" class="form-label">PDF File *</label>
+                                    <input type="file" class="form-control" id="pdfFile" accept=".pdf" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="title" class="form-label">Title *</label>
+                                    <input type="text" class="form-control" id="title" placeholder="Enter title or leave empty to use filename">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="authors" class="form-label">Authors (Optional)</label>
+                                    <input type="text" class="form-control" id="authors" placeholder="Enter authors">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="year" class="form-label">Year (Optional)</label>
+                                    <input type="number" class="form-control" id="year" placeholder="Publication year">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="folderSelect" class="form-label">Folder (Optional)</label>
+                                    <select class="form-control" id="folderSelect">
+                                        <option value="">No folder</option>
+                                        <!-- Folder options will be added here -->
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="category" class="form-label">Category (Optional)</label>
+                                    <input type="text" class="form-control" id="category" placeholder="Enter category">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="tags" class="form-label">Tags (Optional)</label>
+                                    <select class="form-control" id="tags" multiple placeholder="Add tags">
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="abstract" class="form-label">Abstract (Optional)</label>
+                                    <textarea class="form-control" id="abstract" rows="3" placeholder="Enter abstract"></textarea>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Upload</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Paper Details Modal -->
+    <div class="modal fade" id="paperDetailsModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="paperTitle">Paper Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="paperDetails"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Folder Create/Edit Modal -->
+    <div class="modal fade" id="folderModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="folderModalTitle">Create New Folder</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="folderForm">
+                        <input type="hidden" id="folderId">
+                        <div class="mb-3">
+                            <label for="folderName" class="form-label">Folder Name</label>
+                            <input type="text" class="form-control" id="folderName" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="parentFolder" class="form-label">Parent Folder</label>
+                            <select class="form-control" id="parentFolder">
+                                <option value="">No parent (root level)</option>
+                                <!-- Parent folder options will be added here -->
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="folderDescription" class="form-label">Description</label>
+                            <textarea class="form-control" id="folderDescription" rows="2"></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Save</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Move Paper Modal -->
+    <div class="modal fade" id="movePaperModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Move Paper</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="movePaperForm">
+                        <input type="hidden" id="movePaperFilename">
+                        <div class="mb-3">
+                            <label for="movePaperFolder" class="form-label">Select Destination Folder</label>
+                            <select class="form-control" id="movePaperFolder">
+                                <option value="">No folder</option>
+                                <!-- Folder options will be added here -->
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Move</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+    <script src="/static/script.js"></script>
+</body>
+</html>
