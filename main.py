@@ -138,6 +138,32 @@ def get_embedding(text: str) -> List[float]:
     )
     return response.data[0].embedding
 
+def sanitize_filename(title: str, original_extension: str = ".pdf") -> str:
+    """Convert a title to a valid filename."""
+    # Remove invalid characters and replace spaces with underscores
+    filename = re.sub(r'[<>:"/\\|?*]', '', title)
+    filename = filename.replace(' ', '_')
+    
+    # Ensure the filename ends with .pdf
+    if not filename.lower().endswith(original_extension):
+        filename += original_extension
+        
+    return filename
+
+def ensure_unique_filename(base_filename: str, directory: str) -> str:
+    """Ensure filename is unique by adding a number if necessary."""
+    filename = base_filename
+    counter = 1
+    
+    # Split filename into name and extension
+    name, ext = os.path.splitext(filename)
+    
+    while os.path.exists(os.path.join(directory, filename)):
+        filename = f"{name}_{counter}{ext}"
+        counter += 1
+        
+    return filename
+
 # Serve the main index.html page
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
@@ -258,12 +284,17 @@ async def upload_paper(
     try:
         metadata_dict = json.loads(metadata) if metadata else {}
         if not metadata_dict.get('title'):
-            metadata_dict['title'] = file.filename
+            metadata_dict['title'] = os.path.splitext(file.filename)[0]  # Use original filename without extension as title
     except json.JSONDecodeError:
-        metadata_dict = {'title': file.filename}
+        metadata_dict = {'title': os.path.splitext(file.filename)[0]}
     
-    # Save the file
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    # Create a sanitized filename from the title
+    original_ext = os.path.splitext(file.filename)[1].lower()
+    sanitized_filename = sanitize_filename(metadata_dict['title'], original_ext)
+    unique_filename = ensure_unique_filename(sanitized_filename, UPLOAD_DIR)
+    
+    # Save the file with the new filename
+    file_path = os.path.join(UPLOAD_DIR, unique_filename)
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
@@ -273,6 +304,8 @@ async def upload_paper(
         
         # Ensure the text is not empty
         if not text.strip():
+            # Clean up file if text extraction fails
+            os.remove(file_path)
             raise ValueError("No text could be extracted from the PDF file.")
         
         # Truncate text if it's too long (OpenAI has token limits)
@@ -284,9 +317,9 @@ async def upload_paper(
         
         # Prepare sanitized metadata for ChromaDB
         sanitized_metadata = {
-            "filename": file.filename,
+            "filename": unique_filename,  # Store the new filename
             "upload_date": str(datetime.now()),
-            "title": metadata_dict.get('title', file.filename),
+            "title": metadata_dict.get('title', unique_filename),
             "authors": metadata_dict.get('authors', "")
         }
         
@@ -325,11 +358,13 @@ async def upload_paper(
             documents=[text],
             embeddings=[embedding],
             metadatas=[sanitized_metadata],
-            ids=[file.filename]
+            ids=[unique_filename]  # Use the new filename as ID
         )
-        return {"message": "Paper uploaded successfully", "filename": file.filename}
+        return {"message": "Paper uploaded successfully", "filename": unique_filename}
     except Exception as e:
-        os.remove(file_path)  # Clean up file if processing fails
+        # Clean up file if processing fails
+        if os.path.exists(file_path):
+            os.remove(file_path)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/papers/{filename}/metadata")
