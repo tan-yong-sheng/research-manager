@@ -77,10 +77,24 @@ class FolderUpdate(BaseModel):
 FOLDER_FILE = "folders.json"
 
 def load_folders():
+    """Load folders from JSON file and ensure Default Library exists"""
     if os.path.exists(FOLDER_FILE):
         with open(FOLDER_FILE, "r") as f:
-            return json.load(f)
-    return {"folders": []}
+            folders_data = json.load(f)
+    else:
+        folders_data = {"folders": []}
+
+    # Ensure Default Library exists
+    if not any(f["id"] == "default" for f in folders_data["folders"]):
+        folders_data["folders"].append({
+            "id": "default",
+            "name": "Default",
+            "parent_id": None,
+            "description": "Default folder for papers"
+        })
+        save_folders(folders_data)
+
+    return folders_data
 
 def save_folders(folders_data):
     with open(FOLDER_FILE, "w") as f:
@@ -201,7 +215,7 @@ async def get_papers_by_category(category: str):
 async def upload_paper(
     file: UploadFile = File(...),
     metadata: Optional[str] = Form(None),
-    folder_id: Optional[str] = Form(None)
+    folder_id: Optional[str] = Form('default')  # Default to 'default' folder
 ):
     """Upload a research paper and store its embedding."""
     if not file.filename.endswith('.pdf'):
@@ -250,9 +264,8 @@ async def upload_paper(
             "authors": metadata_dict.get('authors', "")
         }
         
-        # Add folder_id to metadata if specified
-        if folder_id:
-            sanitized_metadata["folder_id"] = folder_id
+        # Add folder_id to metadata, defaulting to 'default'
+        sanitized_metadata["folder_id"] = folder_id
         
         # Handle keywords (convert list to JSON string if needed)
         keywords = metadata_dict.get('keywords', [])
@@ -422,6 +435,9 @@ async def create_folder(folder: FolderCreate):
 @app.put("/folders/{folder_id}", response_model=Folder)
 async def update_folder(folder_id: str, folder_update: FolderUpdate):
     """Update a folder"""
+    if folder_id == "default":
+        raise HTTPException(status_code=400, detail="Cannot modify Default Library")
+        
     folders_data = load_folders()
     
     # Find the folder to update
@@ -464,6 +480,9 @@ async def update_folder(folder_id: str, folder_update: FolderUpdate):
 @app.delete("/folders/{folder_id}")
 async def delete_folder(folder_id: str, move_papers: bool = True):
     """Delete a folder"""
+    if folder_id == "default":
+        raise HTTPException(status_code=400, detail="Cannot delete Default Library")
+        
     folders_data = load_folders()
     
     # Check if folder exists
@@ -477,27 +496,26 @@ async def delete_folder(folder_id: str, move_papers: bool = True):
     if not folder_exists:
         raise HTTPException(status_code=404, detail="Folder not found")
     
-    # Update papers in this folder to have no folder
+    # Move papers to Default Library instead of removing folder association
     if move_papers:
         try:
             results = collection.get(include=["metadatas", "ids"])
             
             for i, metadata in enumerate(results["metadatas"]):
                 if metadata.get("folder_id") == folder_id:
-                    # Update paper to remove folder association
-                    metadata["folder_id"] = None
+                    # Update paper to move to Default Library
+                    metadata["folder_id"] = "default"
                     collection.update(
                         ids=[results["ids"][i]],
                         metadatas=[metadata]
                     )
         except Exception as e:
-            # If collection is empty or other error
             pass
     
-    # Update child folders to have no parent
+    # Update child folders to be under Default Library
     for folder in folders_data["folders"]:
         if folder.get("parent_id") == folder_id:
-            folder["parent_id"] = None
+            folder["parent_id"] = "default"
     
     save_folders(folders_data)
     

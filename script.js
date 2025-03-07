@@ -67,6 +67,16 @@ async function loadFolders() {
         const data = await response.json();
         allFolders = data.folders || [];
         
+        // Add Default Library if it doesn't exist
+        if (!allFolders.find(f => f.id === 'default')) {
+            allFolders.unshift({
+                id: 'default',
+                name: 'Default Library',
+                parent_id: null,
+                description: 'Default folder for papers'
+            });
+        }
+        
         renderFolderTree();
         updateFolderSelects();
         
@@ -80,8 +90,14 @@ function renderFolderTree() {
     const container = $('#foldersContainer');
     container.empty();
     
+    // Always show Default Library first
+    const defaultLibrary = allFolders.find(f => f.id === 'default');
+    if (defaultLibrary) {
+        container.append(renderFolder(defaultLibrary));
+    }
+    
     // Find root level folders (no parent)
-    const rootFolders = allFolders.filter(folder => !folder.parent_id);
+    const rootFolders = allFolders.filter(folder => !folder.parent_id && folder.id !== 'default');
     
     // Render each root folder and its children
     rootFolders.forEach(folder => {
@@ -248,12 +264,14 @@ function updateFolderSelects() {
     
     selects.forEach(selector => {
         const select = $(selector);
-        select.find('option:not(:first)').remove();
+        select.find('option:not(:first)').remove(); // Keep the Default Library option
         
-        // Add all folders
-        allFolders.forEach(folder => {
-            select.append(`<option value="${folder.id}">${folder.name}</option>`);
-        });
+        // Add all folders except Default Library (since it's already the first option)
+        allFolders
+            .filter(folder => folder.id !== 'default')
+            .forEach(folder => {
+                select.append(`<option value="${folder.id}">${folder.name}</option>`);
+            });
     });
 }
 
