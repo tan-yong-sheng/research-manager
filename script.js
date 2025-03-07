@@ -548,7 +548,9 @@ async function loadDashboard() {
         console.log("Dashboard data loaded:", { stats, papers });
         
         updateStats(stats);
-        updatePapersList(papers.papers);
+        // Filter out papers that are in the trash folder
+        const nonTrashedPapers = papers.papers.filter(paper => paper.folder_id !== TRASH_FOLDER_ID);
+        updatePapersList(nonTrashedPapers);
         updateFilters(stats);
     } catch (error) {
         console.error('Error loading dashboard:', error);
