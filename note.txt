@@ -13,5 +13,8 @@ Below are my requirements:
 - raising errors to user when he / she wants to create duplicate folders (in case insensitive mode)
 - raising errors when user want to create duplicate files (even in different folders and case insensitive)
 
+- the 'all papers' not display deleted files
+- the 'search results' page not display deleted files
+
 
 Please plan what framework you're going to use for these tests, because we're going to test mix of python and javascript...
