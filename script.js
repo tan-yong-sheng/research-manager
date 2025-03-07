@@ -946,6 +946,25 @@ async function filterByTag(tag) {
     }
 }
 
+// Reset all filters
+$('#resetFilters').click(function() {
+    // Reset search input
+    $('#searchInput').val('');
+    
+    // Reset category filter
+    $('#categoryFilter').val('').trigger('change');
+    
+    // Reset tag filter
+    $('#tagFilter').val('').trigger('change');
+    
+    // Refresh the current view
+    if (currentFolderId) {
+        loadPapersInFolder(currentFolderId);
+    } else {
+        loadDashboard();
+    }
+});
+
 // Upload handling functions
 function handleFileUpload() {
     // Clear the form
