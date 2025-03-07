@@ -1,1 +1,1 @@
-{"folders": [{"id": "default", "name": "Default", "parent_id": null, "description": "Default folder for papers"}, {"id": "06b238e6-2c26-4ccb-834e-03deb2cbc3df", "name": "FYP", "parent_id": null, "description": ""}, {"id": "170c2bd5-ccc1-4277-9889-428cd7256f36", "name": "Sub FYP", "parent_id": "06b238e6-2c26-4ccb-834e-03deb2cbc3df", "description": ""}]}
+{"folders": [{"id": "default", "name": "Default", "parent_id": null, "description": "Default folder for papers"}, {"id": "trash", "name": "Trash", "parent_id": null, "description": "Trash folder for papers"}]}

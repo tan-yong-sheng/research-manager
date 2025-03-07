@@ -1,6 +1,6 @@
 import os
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Body
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Body, Query
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -86,11 +86,19 @@ def load_folders():
 
     # Ensure Default Library exists
     if not any(f["id"] == "default" for f in folders_data["folders"]):
+        ## add default folder
         folders_data["folders"].append({
             "id": "default",
             "name": "Default",
             "parent_id": None,
             "description": "Default folder for papers"
+        })
+        ## add trash folder
+        folders_data["folders"].append({
+            "id": "trash",
+            "name": "Trash",
+            "parent_id": None,
+            "description": "Trash folder for papers"
         })
         save_folders(folders_data)
 
@@ -397,16 +405,38 @@ async def get_paper_metadata(filename: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/papers/{filename}")
-async def delete_paper(filename: str):
-    """Delete a paper and its embedding."""
+async def delete_paper(filename: str, soft_delete: bool = True):
+    """Delete a paper. If soft_delete=True, moves it to trash folder, otherwise permanently deletes it."""
     try:
-        collection.delete(ids=[filename])
+        # Get existing metadata first
+        results = collection.get(
+            ids=[filename],
+            include=["metadatas"]
+        )
+        
+        if not results["ids"]:
+            raise HTTPException(status_code=404, detail="Paper not found")
+        
+        current_metadata = results["metadatas"][0]
         file_path = os.path.join(UPLOAD_DIR, filename)
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        return {"message": "Paper deleted successfully"}
+        
+        if soft_delete and current_metadata.get("folder_id") != "trash":
+            # Move to trash instead of deleting
+            current_metadata["folder_id"] = "trash"
+            collection.update(
+                ids=[filename],
+                metadatas=[current_metadata]
+            )
+            return {"message": "Paper moved to trash"}
+        else:
+            # Hard delete - remove from database and file system
+            collection.delete(ids=[filename])
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            return {"message": "Paper permanently deleted"}
+            
     except Exception as e:
-        raise HTTPException(status_code=404, detail="Paper not found")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/search/")
 async def search_papers(query: str, n_results: int = 5):
@@ -517,14 +547,21 @@ async def update_folder(folder_id: str, folder_update: FolderUpdate):
     return current_folder
 
 @app.delete("/folders/{folder_id}")
-async def delete_folder(folder_id: str, move_papers: bool = True):
-    """Delete a folder"""
+async def delete_folder(
+    folder_id: str, 
+    trash_folder_id: Optional[str] = Query(None),
+    move_papers: bool = True
+):
+    """Delete a folder and move its papers to the trash folder"""
     if folder_id == "default":
         raise HTTPException(status_code=400, detail="Cannot delete Default Library")
+    
+    if folder_id == "trash":
+        raise HTTPException(status_code=400, detail="Cannot delete the Trash folder")
         
     folders_data = load_folders()
     
-    # Check if folder exists
+    # Check if folder exists and get it
     folder_exists = False
     for i, folder in enumerate(folders_data["folders"]):
         if folder["id"] == folder_id:
@@ -534,27 +571,42 @@ async def delete_folder(folder_id: str, move_papers: bool = True):
     
     if not folder_exists:
         raise HTTPException(status_code=404, detail="Folder not found")
+
+    # Always use trash folder by default, override if specific trash_folder_id provided
+    destination_folder_id = "trash"
+    if trash_folder_id and trash_folder_id != "trash":
+        if any(f["id"] == trash_folder_id for f in folders_data["folders"]):
+            destination_folder_id = trash_folder_id
+        else:
+            raise HTTPException(status_code=404, detail="Specified destination folder not found")
     
-    # Move papers to Default Library instead of removing folder association
+    # Move papers to trash folder
     if move_papers:
         try:
-            results = collection.get(include=["metadatas", "ids"])
-            
-            for i, metadata in enumerate(results["metadatas"]):
-                if metadata.get("folder_id") == folder_id:
-                    # Update paper to move to Default Library
-                    metadata["folder_id"] = "default"
-                    collection.update(
-                        ids=[results["ids"][i]],
-                        metadatas=[metadata]
-                    )
+            # Get all papers first
+            results = collection.get(include=["metadatas", "documents", "embeddings"])
+            if results and results["ids"]:
+                for i, metadata in enumerate(results["metadatas"]):
+                    if metadata.get("folder_id") == folder_id:
+                        # Create updated metadata with new folder_id
+                        updated_metadata = dict(metadata)
+                        updated_metadata["folder_id"] = destination_folder_id
+                        
+                        # Update the paper in ChromaDB
+                        collection.update(
+                            ids=[results["ids"][i]],
+                            metadatas=[updated_metadata],
+                            documents=[results["documents"][i]],
+                            embeddings=[results["embeddings"][i]]
+                        )
         except Exception as e:
-            pass
+            print(f"Error moving papers: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to move papers: {str(e)}")
     
-    # Update child folders to be under Default Library
+    # Update child folders to be under trash folder too
     for folder in folders_data["folders"]:
         if folder.get("parent_id") == folder_id:
-            folder["parent_id"] = "default"
+            folder["parent_id"] = destination_folder_id
     
     save_folders(folders_data)
     

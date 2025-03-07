@@ -4,6 +4,7 @@ const API_URL = 'http://localhost:8000';
 // Global variables
 let allFolders = [];
 let currentFolderId = null;
+const TRASH_FOLDER_ID = "trash"; // Update to use correct trash folder ID
 
 // Initialize Select2 for tags
 $(document).ready(() => {
@@ -268,18 +269,16 @@ function updateParentFolderSelect(excludeFolderId = null) {
 
 function updateFolderSelects() {
     // Update folder selects in forms
-    const selects = ['#folderSelect', '#movePaperFolder'];
+    const selects = ['#folderSelect', '#movePaperFolder', '#modal_folderSelect'];
     
     selects.forEach(selector => {
         const select = $(selector);
-        select.find('option:not(:first)').remove(); // Keep the Default Library option
+        select.empty();
         
-        // Add all folders except Default Library (since it's already the first option)
-        allFolders
-            .filter(folder => folder.id !== 'default')
-            .forEach(folder => {
-                select.append(`<option value="${folder.id}">${folder.name}</option>`);
-            });
+        // Add all folders
+        allFolders.forEach(folder => {
+            select.append(`<option value="${folder.id}">${folder.name}</option>`);
+        });
     });
 }
 
@@ -337,12 +336,13 @@ async function saveFolder() {
 async function deleteFolder(event, folderId) {
     event.stopPropagation();
     
-    if (!confirm("Are you sure you want to delete this folder? Papers inside will be moved to no folder.")) {
+    if (!confirm("Are you sure you want to delete this folder? Papers inside will be moved to Trash folder.")) {
         return;
     }
     
     try {
-        const response = await fetch(`${API_URL}/folders/${folderId}`, {
+        // Modified to include the trash_folder_id as a query parameter
+        const response = await fetch(`${API_URL}/folders/${folderId}?trash_folder_id=${TRASH_FOLDER_ID}`, {
             method: 'DELETE'
         });
         
@@ -530,6 +530,8 @@ function updatePapersList(papers) {
             tags = paper.tags;
         }
         
+        const isInTrash = paper.folder_id === TRASH_FOLDER_ID;
+        
         // Create card HTML
         const card = $(`
             <div class="col-md-4 mb-4">
@@ -553,8 +555,13 @@ function updatePapersList(papers) {
                     <div class="card-footer">
                         <button class="btn btn-sm btn-primary" onclick="viewPaper('${paper.filename}')">View</button>
                         <button class="btn btn-sm btn-secondary" onclick="editMetadata('${paper.filename}')">Edit</button>
-                        <button class="btn btn-sm btn-info" onclick="showMovePaperModal('${paper.filename}')">Move</button>
-                        <button class="btn btn-sm btn-danger" onclick="deletePaper('${paper.filename}')">Delete</button>
+                        ${!isInTrash ? `
+                            <button class="btn btn-sm btn-info" onclick="showMovePaperModal('${paper.filename}')">Move</button>
+                            <button class="btn btn-sm btn-danger" onclick="deletePaper('${paper.filename}', false)">Delete</button>
+                        ` : `
+                            <button class="btn btn-sm btn-info" onclick="movePaperToFolder('${paper.filename}', 'default')">Restore</button>
+                            <button class="btn btn-sm btn-danger" onclick="deletePaper('${paper.filename}', true)">Delete Permanently</button>
+                        `}
                     </div>
                 </div>
             </div>
@@ -566,7 +573,16 @@ function updatePapersList(papers) {
 
 function getFolderName(folderId) {
     const folder = allFolders.find(f => f.id === folderId);
-    return folder ? folder.name : 'Unknown folder';
+    // If no folder is found, check if it's the Trash folder
+    if (!folder) {
+        if (folderId === TRASH_FOLDER_ID) {
+            return 'Trash';
+        }
+        if (!folderId) {
+            return 'Default Library';
+        }
+    }
+    return folder ? folder.name : 'Default Library';
 }
 
 // Update filters
@@ -844,18 +860,22 @@ async function editMetadata(filename) {
 }
 
 // Delete paper
-async function deletePaper(filename) {
-    if (!confirm('Are you sure you want to delete this paper?')) {
+async function deletePaper(filename, isTrashItem = false) {
+    const message = isTrashItem 
+        ? 'Are you sure you want to permanently delete this paper? This action cannot be undone.'
+        : 'Move this paper to trash?';
+        
+    if (!confirm(message)) {
         return;
     }
     
     try {
-        const response = await fetch(`${API_URL}/papers/${filename}`, {
+        const response = await fetch(`${API_URL}/papers/${filename}?soft_delete=${!isTrashItem}`, {
             method: 'DELETE'
         });
         
         if (response.ok) {
-            alert('Paper deleted successfully');
+            alert(isTrashItem ? 'Paper permanently deleted' : 'Paper moved to trash');
             
             // Refresh the current view
             if (currentFolderId) {
