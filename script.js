@@ -805,18 +805,51 @@ async function uploadSingleFile(file, folderId) {
     if (folderId) {
         formData.append('folder_id', folderId);
     }
-    
-    const response = await fetch(`${API_URL}/papers/`, {
-        method: 'POST',
-        body: formData
-    });
-    
-    if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Upload failed');
+
+    try {
+        const response = await fetch(`${API_URL}/papers/`, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (response.status === 409) {
+            // File exists conflict
+            const error = await response.json();
+            
+            // Ask user for confirmation
+            const confirmOverride = confirm(
+                `A file with the name "${error.detail.filename}" already exists. Do you want to override it?\n\n` +
+                `Note: This will completely replace the existing file and its metadata.`
+            );
+            
+            if (confirmOverride) {
+                // Retry with override flag
+                formData.append('override', 'true');
+                const retryResponse = await fetch(`${API_URL}/papers/`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!retryResponse.ok) {
+                    const retryError = await retryResponse.json();
+                    throw new Error(retryError.detail || 'Upload failed');
+                }
+                
+                return retryResponse.json();
+            } else {
+                throw new Error('Upload cancelled by user');
+            }
+        }
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Upload failed');
+        }
+        
+        return response.json();
+    } catch (error) {
+        throw error;
     }
-    
-    return response.json();
 }
 
 // View paper

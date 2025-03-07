@@ -263,11 +263,20 @@ async def get_papers_by_category(category: str):
         papers = []
     return {"papers": papers}
 
+async def check_file_exists(filename: str) -> bool:
+    """Check if a file with the given filename exists in any folder."""
+    try:
+        results = collection.get(ids=[filename], include=["metadatas"])
+        return bool(results["ids"])
+    except Exception:
+        return False
+
 @app.post("/papers/")
 async def upload_paper(
     file: UploadFile = File(...),
     metadata: Optional[str] = Form(None),
-    folder_id: Optional[str] = Form('default')  # Default to 'default' folder
+    folder_id: Optional[str] = Form('default'),  # Default to 'default' folder
+    override: bool = Form(False)  # New parameter to handle overrides
 ):
     """Upload a research paper and store its embedding."""
     if not file.filename.endswith('.pdf'):
@@ -291,10 +300,25 @@ async def upload_paper(
     # Create a sanitized filename from the title
     original_ext = os.path.splitext(file.filename)[1].lower()
     sanitized_filename = sanitize_filename(metadata_dict['title'], original_ext)
-    unique_filename = ensure_unique_filename(sanitized_filename, UPLOAD_DIR)
+    
+    # Check if file exists
+    if await check_file_exists(sanitized_filename):
+        if not override:
+            raise HTTPException(
+                status_code=409,  # Conflict
+                detail={
+                    "message": "File with this name already exists",
+                    "filename": sanitized_filename,
+                    "requires_override": True
+                }
+            )
+        # If override is True, we'll continue and replace the existing file
+    else:
+        # If file doesn't exist, ensure unique filename
+        sanitized_filename = ensure_unique_filename(sanitized_filename, UPLOAD_DIR)
     
     # Save the file with the new filename
-    file_path = os.path.join(UPLOAD_DIR, unique_filename)
+    file_path = os.path.join(UPLOAD_DIR, sanitized_filename)
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
@@ -317,9 +341,9 @@ async def upload_paper(
         
         # Prepare sanitized metadata for ChromaDB
         sanitized_metadata = {
-            "filename": unique_filename,  # Store the new filename
+            "filename": sanitized_filename,  # Store the new filename
             "upload_date": str(datetime.now()),
-            "title": metadata_dict.get('title', unique_filename),
+            "title": metadata_dict.get('title', sanitized_filename),
             "authors": metadata_dict.get('authors', "")
         }
         
@@ -352,15 +376,22 @@ async def upload_paper(
         category = metadata_dict.get('category')
         if category is not None and category != "":
             sanitized_metadata["category"] = category
+
+        # Delete existing document if overriding
+        if override:
+            try:
+                collection.delete(ids=[sanitized_filename])
+            except Exception:
+                pass
         
         # Store in ChromaDB
         collection.add(
             documents=[text],
             embeddings=[embedding],
             metadatas=[sanitized_metadata],
-            ids=[unique_filename]  # Use the new filename as ID
+            ids=[sanitized_filename]  # Use the new filename as ID
         )
-        return {"message": "Paper uploaded successfully", "filename": unique_filename}
+        return {"message": "Paper uploaded successfully", "filename": sanitized_filename}
     except Exception as e:
         # Clean up file if processing fails
         if os.path.exists(file_path):
