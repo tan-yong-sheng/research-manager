@@ -948,36 +948,6 @@ async function filterByTag(tag) {
 
 // Upload handling functions
 function handleFileUpload() {
-    // Set file input for single file upload
-    $('#modal_pdfFile').removeAttr('webkitdirectory');
-    $('#modal_pdfFile').removeAttr('directory');
-    $('#modal_pdfFile').removeAttr('multiple');
-    
-    // Clear the form
-    $('#modalUploadForm')[0].reset();
-    $('#modal_uploadFolderId').val(currentFolderId || 'default');
-    
-    // Initialize Select2 for tags
-    $('#modal_tags').select2({
-        tags: true,
-        tokenSeparators: [',', ' '],
-        dropdownParent: $('#uploadModal'),
-        placeholder: 'Add tags...'
-    });
-    
-    // Load existing tags
-    loadTagsForModal();
-    
-    // Show the upload modal
-    new bootstrap.Modal('#uploadModal').show();
-}
-
-function handleFolderUpload() {
-    // Set file input for folder upload
-    $('#modal_pdfFile').attr('webkitdirectory', '');
-    $('#modal_pdfFile').attr('directory', '');
-    $('#modal_pdfFile').attr('multiple', '');
-    
     // Clear the form
     $('#modalUploadForm')[0].reset();
     $('#modal_uploadFolderId').val(currentFolderId || 'default');
