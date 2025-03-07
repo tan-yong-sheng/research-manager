@@ -181,8 +181,52 @@ function openFolder(folderId) {
     const folder = allFolders.find(f => f.id === folderId);
     $('#currentViewTitle').text(folder ? folder.name : 'All Papers');
     
+    // Show empty trash button if in trash folder, otherwise show upload button
+    const actionButton = folderId === TRASH_FOLDER_ID ? 
+        `<button class="btn btn-outline-danger" onclick="emptyTrash()">
+            <i class="bi bi-trash3"></i> Empty Trash
+        </button>` :
+        `<button class="btn btn-outline-primary" type="button" onclick="handleFileUpload()">
+            <i class="bi bi-upload"></i> Upload
+        </button>`;
+    
+    $('.col.text-end').html(actionButton);
+    
     // Load papers in this folder
     loadPapersInFolder(folderId);
+}
+
+// Add empty trash function
+async function emptyTrash() {
+    if (!confirm('Are you sure you want to empty the trash? This will permanently delete all papers in the trash folder. This action cannot be undone.')) {
+        return;
+    }
+    
+    try {
+        // Get all papers in trash
+        const response = await fetch(`${API_URL}/papers/by-folder/${TRASH_FOLDER_ID}`);
+        if (!response.ok) {
+            throw new Error("Failed to load papers from trash");
+        }
+        
+        const data = await response.json();
+        const papers = data.papers || [];
+        
+        // Delete each paper permanently
+        for (const paper of papers) {
+            await fetch(`${API_URL}/papers/${paper.filename}?soft_delete=false`, {
+                method: 'DELETE'
+            });
+        }
+        
+        // Refresh the current view
+        loadPapersInFolder(TRASH_FOLDER_ID);
+        
+        alert('Trash emptied successfully');
+    } catch (error) {
+        console.error('Error emptying trash:', error);
+        alert('Failed to empty trash: ' + error.message);
+    }
 }
 
 function showAllPapers() {
