@@ -168,9 +168,17 @@ async def get_stats():
         if category:
             categories[category] = categories.get(category, 0) + 1
             
-        # Collect unique tags
-        paper_tags = paper.get("tags", [])
-        if isinstance(paper_tags, list):
+        # Collect unique tags - handle JSON string format
+        paper_tags = paper.get("tags", "[]")
+        if isinstance(paper_tags, str):
+            try:
+                # Parse JSON string to list
+                parsed_tags = json.loads(paper_tags)
+                if isinstance(parsed_tags, list):
+                    tags.update(parsed_tags)
+            except json.JSONDecodeError:
+                print(f"Warning: Could not parse tags JSON: {paper_tags}")
+        elif isinstance(paper_tags, list):
             tags.update(paper_tags)
         
         # Count papers by year
@@ -190,11 +198,21 @@ async def get_papers_by_tag(tag: str):
     """Get papers with specific tag"""
     try:
         results = collection.get(include=["metadatas"])
-        papers = [
-            paper for paper in results["metadatas"]
-            if tag in paper.get("tags", [])
-        ]
-    except Exception:
+        papers = []
+        for paper in results["metadatas"]:
+            paper_tags = paper.get("tags", "[]")
+            # Parse tags if they're stored as JSON string
+            if isinstance(paper_tags, str):
+                try:
+                    parsed_tags = json.loads(paper_tags)
+                    if isinstance(parsed_tags, list) and tag in parsed_tags:
+                        papers.append(paper)
+                except json.JSONDecodeError:
+                    print(f"Warning: Could not parse tags JSON: {paper_tags}")
+            elif isinstance(paper_tags, list) and tag in paper_tags:
+                papers.append(paper)
+    except Exception as e:
+        print(f"Error in get_papers_by_tag: {str(e)}")
         papers = []
     return {"papers": papers}
 

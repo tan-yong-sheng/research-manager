@@ -7,10 +7,19 @@ let currentFolderId = null;
 
 // Initialize Select2 for tags
 $(document).ready(() => {
-    $('#tags').select2({
-        tags: true,
-        tokenSeparators: [',', ' '],
-        placeholder: 'Add tags...'
+    // Initialize tag filters with Select2
+    $('#tagFilter').select2({
+        width: '100%',
+        placeholder: 'All Tags'
+    });
+    
+    $('#tags, #modal_tags').each(function() {
+        $(this).select2({
+            tags: true,
+            tokenSeparators: [',', ' '],
+            placeholder: 'Add tags...',
+            dropdownParent: $(this).closest('.modal') // For modal instances
+        });
     });
     
     // Load both papers and folders when the app starts
@@ -521,6 +530,7 @@ function updatePapersList(papers) {
             tags = paper.tags;
         }
         
+        // Create card HTML
         const card = $(`
             <div class="col-md-4 mb-4">
                 <div class="card paper-card h-100" draggable="true" ondragstart="event.dataTransfer.setData('text', '${paper.filename}')">
@@ -530,7 +540,9 @@ function updatePapersList(papers) {
                             <small class="text-muted">${paper.authors || ''}</small><br>
                             <small class="text-muted">${paper.year || 'Year not specified'}</small>
                         </p>
-                        ${tags.map(tag => `<span class="badge bg-secondary me-1">${tag}</span>`).join('')}
+                        <div class="tags-container mb-2">
+                            ${tags.map(tag => `<span class="badge bg-secondary me-1">${tag}</span>`).join('')}
+                        </div>
                         ${paper.category ? `<span class="badge bg-primary">${paper.category}</span>` : ''}
                         
                         ${paper.folder_id ? `
@@ -714,6 +726,11 @@ async function editMetadata(filename) {
             tags = paper.tags;
         }
         
+        // Load all available tags from stats
+        const statsResponse = await fetch(`${API_URL}/stats`);
+        const stats = await statsResponse.json();
+        const allTags = stats.tags;
+        
         // Populate modal with paper details
         $('#paperTitle').text(paper.title || filename);
         
@@ -754,7 +771,9 @@ async function editMetadata(filename) {
                 <div class="mb-3">
                     <label class="form-label">Tags</label>
                     <select class="form-control" id="editTags" multiple>
-                        ${tags.map(tag => `<option value="${tag}" selected>${tag}</option>`).join('')}
+                        ${allTags.map(tag => 
+                            `<option value="${tag}" ${tags.includes(tag) ? 'selected' : ''}>${tag}</option>`
+                        ).join('')}
                     </select>
                 </div>
                 <div class="mb-3">
@@ -765,10 +784,11 @@ async function editMetadata(filename) {
             </form>
         `);
         
-        // Initialize Select2 for tags in modal
+        // Initialize Select2 for tags in modal with all existing tags
         $('#editTags').select2({
             tags: true,
-            tokenSeparators: [',', ' ']
+            tokenSeparators: [',', ' '],
+            dropdownParent: $('#paperDetailsModal')
         });
         
         // Set up form submission handler

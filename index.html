@@ -101,7 +101,7 @@
         <div class="row">
             <!-- Left Sidebar - Folder Structure -->
             <div class="col-md-3 col-lg-2">
-                <div class="card">
+                <div class="card mb-3">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <strong>Folders</strong>
                         <button class="btn btn-sm btn-outline-primary" onclick="showCreateFolderModal()">
@@ -116,6 +116,31 @@
                             <div id="foldersContainer">
                                 <!-- Folders will be dynamically added here -->
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Search and Filters -->
+                <div class="card">
+                    <div class="card-header">
+                        <strong>Search & Filters</strong>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">Search</label>
+                            <input type="text" id="searchInput" class="form-control form-control-sm" placeholder="Search papers...">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Category</label>
+                            <select id="categoryFilter" class="form-control form-control-sm">
+                                <option value="">All Categories</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Tags</label>
+                            <select id="tagFilter" class="form-control form-control-sm">
+                                <option value="">All Tags</option>
+                            </select>
                         </div>
                     </div>
                 </div>
@@ -161,21 +186,8 @@
                     </div>
 
                     <div class="row mb-4">
-                        <div class="col-md-5">
-                            <input type="text" id="searchInput" class="form-control" placeholder="Search papers...">
-                        </div>
-                        <div class="col-md-2">
-                            <select id="categoryFilter" class="form-control">
-                                <option value="">All Categories</option>
-                            </select>
-                        </div>
-                        <div class="col-md-2">
-                            <select id="tagFilter" class="form-control">
-                                <option value="">All Tags</option>
-                            </select>
-                        </div>
-                        <div class="col-md-3 text-end">
-                            <div class="dropdown d-inline-block"></div>
+                        <div class="col text-end">
+                            <div class="dropdown d-inline-block">
                                 <button class="btn btn-outline-primary dropdown-toggle" type="button" id="uploadDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                                     <i class="bi bi-upload"></i> Upload
                                 </button>
