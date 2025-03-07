@@ -399,8 +399,31 @@ async function deleteFolder(event, folderId) {
     }
     
     try {
-        // Modified to include the trash_folder_id as a query parameter
-        const response = await fetch(`${API_URL}/folders/${folderId}?trash_folder_id=${TRASH_FOLDER_ID}`, {
+        // First, get all papers in the folder
+        const papersResponse = await fetch(`${API_URL}/papers/by-folder/${folderId}`);
+        if (!papersResponse.ok) {
+            throw new Error("Failed to get papers in folder");
+        }
+        
+        const papersData = await papersResponse.json();
+        const papers = papersData.papers || [];
+        
+        // Move each paper to trash while preserving original folder info
+        for (const paper of papers) {
+            const moveResponse = await fetch(`${API_URL}/papers/${paper.filename}/move?folder_id=${TRASH_FOLDER_ID}&original_folder_id=${folderId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            if (!moveResponse.ok) {
+                throw new Error(`Failed to move paper ${paper.filename} to trash`);
+            }
+        }
+        
+        // Now delete the folder
+        const response = await fetch(`${API_URL}/folders/${folderId}`, {
             method: 'DELETE'
         });
         
@@ -502,19 +525,24 @@ async function movePaperToFolder(filename, folderId) {
         const metadataResponse = await fetch(`${API_URL}/papers/${filename}/metadata`);
         const metadata = await metadataResponse.json();
         
-        // If restoring from trash and paper has original_folder_id, try to use it
+        // If restoring from trash, try to use original folder, otherwise show warning
         let targetFolderId = folderId;
-        if (metadata.folder_id === 'trash' && metadata.original_folder_id) {
+        if (metadata.folder_id === 'trash') {
             // Check if original folder still exists
             const foldersResponse = await fetch(`${API_URL}/folders/`);
             const foldersData = await foldersResponse.json();
             const originalFolderExists = foldersData.folders.some(f => f.id === metadata.original_folder_id);
             
-            if (originalFolderExists) {
+            if (metadata.original_folder_id && originalFolderExists) {
                 targetFolderId = metadata.original_folder_id;
             } else {
-                // Show reminder that file will be moved to Default folder
-                alert(`The original folder no longer exists. The file will be moved to Default Library.`);
+                // Show warning confirmation dialog before moving to Default folder
+                const paperTitle = metadata.title || filename;
+                const confirmMove = confirm(`The original folder for "${paperTitle}" no longer exists. Do you want to restore it to Default Library instead? Click Cancel to abort restoration.`);
+                
+                if (!confirmMove) {
+                    return; // User cancelled the operation
+                }
                 targetFolderId = 'default';
             }
         }
@@ -640,7 +668,7 @@ function updatePapersList(papers) {
                             <button class="btn btn-sm btn-info" onclick="showMovePaperModal('${paper.filename}')">Move</button>
                             <button class="btn btn-sm btn-danger" onclick="deletePaper('${paper.filename}', false)">Delete</button>
                         ` : `
-                            <button class="btn btn-sm btn-info" onclick="movePaperToFolder('${paper.filename}', 'default')">Restore</button>
+                            <button class="btn btn-sm btn-info" onclick="movePaperToFolder('${paper.filename}', null)">Restore</button>
                             <button class="btn btn-sm btn-danger" onclick="deletePaper('${paper.filename}', true)">Delete Permanently</button>
                         `}
                     </div>
