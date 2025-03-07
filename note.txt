@@ -1,0 +1,17 @@
+## To Github Copilot: can you write testing for my project?
+
+Below are my requirements:
+
+- can pdf file can be uploaded especially via API (using tempfile please)
+   - with metadata filled in
+   - without metadata filled in
+
+- can folder be created?
+- duplicate folders cannot be created in backend (in case insensitive mode)
+- duplicate files cannot be created in backend (even in different folders and case-insensitive)
+
+- raising errors to user when he / she wants to create duplicate folders (in case insensitive mode)
+- raising errors when user want to create duplicate files (even in different folders and case insensitive)
+
+
+Please plan what framework you're going to use for these tests, because we're going to test mix of python and javascript...

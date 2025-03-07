@@ -234,6 +234,10 @@ async def get_papers_by_tag(tag: str):
         results = collection.get(include=["metadatas"])
         papers = []
         for paper in results["metadatas"]:
+            # Skip papers that are in the trash folder
+            if paper.get("folder_id") == "trash":
+                continue
+                
             paper_tags = paper.get("tags", "[]")
             # Parse tags if they're stored as JSON string
             if isinstance(paper_tags, str):
@@ -257,7 +261,7 @@ async def get_papers_by_category(category: str):
         results = collection.get(include=["metadatas"])
         papers = [
             paper for paper in results["metadatas"]
-            if paper.get("category") == category
+            if paper.get("category") == category and paper.get("folder_id") != "trash"
         ]
     except Exception:
         papers = []

@@ -11,7 +11,8 @@ $(document).ready(() => {
     // Initialize tag filters with Select2
     $('#tagFilter').select2({
         width: '100%',
-        placeholder: 'All Tags'
+        placeholder: 'Select tags to filter...',
+        allowClear: true
     });
     
     $('#tags, #modal_tags').each(function() {
@@ -711,7 +712,7 @@ function updateFilters(stats) {
         categorySelect.append(`<option value="${category}">${category} (${stats.categories[category]})</option>`);
     });
     
-    tagSelect.empty().append('<option value="">All Tags</option>');
+    tagSelect.empty();
     stats.tags.forEach(tag => {
         tagSelect.append(`<option value="${tag}">${tag}</option>`);
     });
@@ -1060,7 +1061,9 @@ async function searchPapers(query) {
     try {
         const response = await fetch(`${API_URL}/search/?query=${encodeURIComponent(query)}`);
         const results = await response.json();
-        updatePapersList(results.results.map(r => r.metadata));
+        // Filter out papers that are in trash before updating the display
+        const nonTrashedResults = results.results.filter(r => r.metadata.folder_id !== TRASH_FOLDER_ID);
+        updatePapersList(nonTrashedResults.map(r => r.metadata));
     } catch (error) {
         console.error('Error searching papers:', error);
     }
@@ -1082,9 +1085,9 @@ $('#categoryFilter').change(function() {
 });
 
 $('#tagFilter').change(function() {
-    const tag = $(this).val();
-    if (tag) {
-        filterByTag(tag);
+    const selectedTags = $(this).val();
+    if (selectedTags && selectedTags.length > 0) {
+        filterByMultipleTags(selectedTags);
     } else {
         // Refresh the current view
         if (currentFolderId) {
@@ -1099,19 +1102,40 @@ async function filterByCategory(category) {
     try {
         const response = await fetch(`${API_URL}/papers/by-category/${encodeURIComponent(category)}`);
         const results = await response.json();
-        updatePapersList(results.papers);
+        // Filter out papers that are in trash folder
+        const nonTrashedPapers = results.papers.filter(paper => paper.folder_id !== TRASH_FOLDER_ID);
+        updatePapersList(nonTrashedPapers);
     } catch (error) {
         console.error('Error filtering by category:', error);
     }
 }
 
-async function filterByTag(tag) {
+async function filterByMultipleTags(tags) {
     try {
-        const response = await fetch(`${API_URL}/papers/by-tag/${encodeURIComponent(tag)}`);
-        const results = await response.json();
-        updatePapersList(results.papers);
+        // Get all papers first
+        const response = await fetch(`${API_URL}/papers/`);
+        const data = await response.json();
+        
+        // Filter papers that have ANY of the selected tags (OR logic) and are not in trash
+        const filteredPapers = data.papers.filter(paper => {
+            // Skip papers in trash
+            if (paper.folder_id === TRASH_FOLDER_ID) {
+                return false;
+            }
+            
+            let paperTags = [];
+            try {
+                paperTags = typeof paper.tags === 'string' ? JSON.parse(paper.tags) : paper.tags;
+            } catch (e) {
+                console.warn('Error parsing tags:', e);
+                return false;
+            }
+            return tags.some(tag => paperTags.includes(tag)); // Changed from every() to some()
+        });
+        
+        updatePapersList(filteredPapers);
     } catch (error) {
-        console.error('Error filtering by tag:', error);
+        console.error('Error filtering by tags:', error);
     }
 }
 
