@@ -125,15 +125,6 @@ function renderFolder(folder, isNested = false) {
                     <span class="folder-name">${folder.name}</span>
                 </div>
                 <div class="folder-actions">
-                    <div class="dropdown d-inline-block">
-                        <button class="btn btn-sm btn-link text-dark p-0 mx-1" type="button" data-bs-toggle="dropdown">
-                            <i class="bi bi-upload"></i>
-                        </button>
-                        <ul class="dropdown-menu">
-                            <li><a class="dropdown-item" href="#" onclick="showUploadModal('${folder.id}', 'file')">Upload File</a></li>
-                            <li><a class="dropdown-item" href="#" onclick="showUploadModal('${folder.id}', 'folder')">Upload Folder</a></li>
-                        </ul>
-                    </div>
                     <i class="bi bi-pencil-square mx-1" onclick="editFolder(event, '${folder.id}')"></i>
                     <i class="bi bi-trash mx-1" onclick="deleteFolder(event, '${folder.id}')"></i>
                 </div>
