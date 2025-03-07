@@ -421,7 +421,8 @@ async def delete_paper(filename: str, soft_delete: bool = True):
         file_path = os.path.join(UPLOAD_DIR, filename)
         
         if soft_delete and current_metadata.get("folder_id") != "trash":
-            # Move to trash instead of deleting
+            # Store original folder_id and move to trash
+            current_metadata["original_folder_id"] = current_metadata.get("folder_id")
             current_metadata["folder_id"] = "trash"
             collection.update(
                 ids=[filename],
@@ -651,6 +652,14 @@ async def move_paper(filename: str, folder_id: Optional[str] = None):
         
         # Update metadata with new folder
         metadata = results["metadatas"][0]
+        
+        # If moving to trash, store original folder
+        if folder_id == "trash" and metadata.get("folder_id") != "trash":
+            metadata["original_folder_id"] = metadata.get("folder_id")
+        # If moving out of trash, remove original folder reference
+        elif metadata.get("folder_id") == "trash":
+            metadata.pop("original_folder_id", None)
+            
         metadata["folder_id"] = folder_id
         
         collection.update(

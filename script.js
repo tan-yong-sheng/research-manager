@@ -440,10 +440,27 @@ function handleDrop(event, folderId) {
 
 async function movePaperToFolder(filename, folderId) {
     try {
+        // Get the paper's current metadata to check if it's being restored from trash
+        const metadataResponse = await fetch(`${API_URL}/papers/${filename}/metadata`);
+        const metadata = await metadataResponse.json();
+        
+        // If restoring from trash and paper has original_folder_id, try to use it
+        let targetFolderId = folderId;
+        if (metadata.folder_id === 'trash' && metadata.original_folder_id) {
+            // Check if original folder still exists
+            const foldersResponse = await fetch(`${API_URL}/folders/`);
+            const foldersData = await foldersResponse.json();
+            const originalFolderExists = foldersData.folders.some(f => f.id === metadata.original_folder_id);
+            
+            if (originalFolderExists) {
+                targetFolderId = metadata.original_folder_id;
+            }
+        }
+
         // Construct URL with folder_id as a query parameter
         let url = `${API_URL}/papers/${filename}/move`;
-        if (folderId !== null) {
-            url += `?folder_id=${folderId}`;
+        if (targetFolderId !== null) {
+            url += `?folder_id=${targetFolderId}`;
         }
         
         const response = await fetch(url, {
