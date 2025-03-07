@@ -519,24 +519,24 @@ function updatePapersList(papers) {
     
     papers.forEach(paper => {
         // Parse tags if they're stored as JSON string
-        let tags = paper.tags;
+        let tags = [];
         if (typeof paper.tags === 'string') {
             try {
                 tags = JSON.parse(paper.tags);
             } catch (e) {
-                tags = [];
+                console.warn('Error parsing tags:', e);
             }
-        } else if (!Array.isArray(paper.tags)) {
-            tags = [];
+        } else if (Array.isArray(paper.tags)) {
+            tags = paper.tags;
         }
         
         const card = $(`
             <div class="col-md-4 mb-4">
                 <div class="card paper-card h-100" draggable="true" ondragstart="event.dataTransfer.setData('text', '${paper.filename}')">
                     <div class="card-body">
-                        <h5 class="card-title">${paper.title}</h5>
+                        <h5 class="card-title">${paper.title || paper.filename}</h5>
                         <p class="card-text">
-                            <small class="text-muted">${paper.authors}</small><br>
+                            <small class="text-muted">${paper.authors || ''}</small><br>
                             <small class="text-muted">${paper.year || 'Year not specified'}</small>
                         </p>
                         ${tags.map(tag => `<span class="badge bg-secondary me-1">${tag}</span>`).join('')}
@@ -671,23 +671,32 @@ async function viewPaper(filename) {
 // Edit metadata
 async function editMetadata(filename) {
     try {
-        const response = await fetch(`${API_URL}/papers/${filename}`);
+        console.log('Fetching paper details for:', filename);
+        const response = await fetch(`${API_URL}/papers/${filename}/metadata`);
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Server response:', response.status, errorText);
+            throw new Error(`Server returned ${response.status}: ${errorText}`);
+        }
+        
         const paper = await response.json();
+        console.log('Received paper data:', paper);
         
         // Parse tags if they're stored as JSON string
-        let tags = paper.tags;
+        let tags = [];
         if (typeof paper.tags === 'string') {
             try {
                 tags = JSON.parse(paper.tags);
             } catch (e) {
-                tags = [];
+                console.warn('Error parsing tags:', e);
             }
-        } else if (!Array.isArray(paper.tags)) {
-            tags = [];
+        } else if (Array.isArray(paper.tags)) {
+            tags = paper.tags;
         }
         
         // Populate modal with paper details
-        $('#paperTitle').text(paper.title);
+        $('#paperTitle').text(paper.title || filename);
         
         // Update the folder options
         updateFolderSelects();
@@ -698,7 +707,7 @@ async function editMetadata(filename) {
                 <input type="hidden" id="editFilename" value="${filename}">
                 <div class="mb-3">
                     <label class="form-label">Title</label>
-                    <input type="text" class="form-control" id="editTitle" value="${paper.title}">
+                    <input type="text" class="form-control" id="editTitle" value="${paper.title || ''}">
                 </div>
                 <div class="mb-3">
                     <label class="form-label">Authors</label>
@@ -766,19 +775,20 @@ async function editMetadata(filename) {
                     body: JSON.stringify(updatedMetadata)
                 });
                 
-                if (response.ok) {
-                    alert('Metadata updated successfully');
-                    bootstrap.Modal.getInstance('#paperDetailsModal').hide();
-                    
-                    // Refresh the current view
-                    if (currentFolderId) {
-                        loadPapersInFolder(currentFolderId);
-                    } else {
-                        loadDashboard();
-                    }
+                if (!response.ok) {
+                    const errorData = await response.text();
+                    console.error('Update response:', response.status, errorData);
+                    throw new Error(`Update failed: ${errorData}`);
+                }
+                
+                alert('Metadata updated successfully');
+                bootstrap.Modal.getInstance('#paperDetailsModal').hide();
+                
+                // Refresh the current view
+                if (currentFolderId) {
+                    loadPapersInFolder(currentFolderId);
                 } else {
-                    const error = await response.json();
-                    throw new Error(error.detail || 'Update failed');
+                    loadDashboard();
                 }
             } catch (error) {
                 console.error('Error updating metadata:', error);
@@ -790,7 +800,7 @@ async function editMetadata(filename) {
         new bootstrap.Modal('#paperDetailsModal').show();
     } catch (error) {
         console.error('Error loading paper details:', error);
-        alert('Failed to load paper details');
+        alert('Failed to load paper details: ' + error.message);
     }
 }
 

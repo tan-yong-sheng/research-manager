@@ -32,7 +32,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # For development only - configure properly in production
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],  # Explicitly list allowed methods
     allow_headers=["*"],
 )
 
@@ -307,7 +307,7 @@ async def upload_paper(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/papers/{filename}/metadata")
-async def update_paper_metadata(filename: str, metadata: PaperMetadata):
+async def update_paper_metadata(filename: str, metadata: Dict[str, Any]):
     """Update paper metadata"""
     try:
         # Get existing metadata
@@ -318,22 +318,27 @@ async def update_paper_metadata(filename: str, metadata: PaperMetadata):
         
         if not results["ids"]:
             raise HTTPException(status_code=404, detail="Paper not found")
-            
+        
         # Update metadata while preserving existing data
+        existing_metadata = results["metadatas"][0]
+        
+        # Convert None values to appropriate types for ChromaDB
+        updated_metadata = {
+            "filename": filename,
+            "upload_date": existing_metadata["upload_date"],
+            "title": metadata.get("title") or existing_metadata.get("title", ""),
+            "authors": metadata.get("authors") or existing_metadata.get("authors", ""),
+            "year": metadata.get("year") if metadata.get("year") is not None else existing_metadata.get("year", ""),
+            "category": metadata.get("category") or existing_metadata.get("category", ""),
+            "tags": json.dumps(metadata.get("tags", [])),  # Convert tags list to JSON string
+            "abstract": metadata.get("abstract") or existing_metadata.get("abstract", ""),
+            "folder_id": metadata.get("folder_id") or existing_metadata.get("folder_id", "default")
+        }
+        
+        # Update in ChromaDB
         collection.update(
             ids=[filename],
-            metadatas=[{
-                "filename": filename,
-                "upload_date": results["metadatas"][0]["upload_date"],
-                "title": metadata.title,
-                "authors": metadata.authors,
-                "year": metadata.year,
-                "keywords": metadata.keywords,
-                "tags": metadata.tags,
-                "category": metadata.category,
-                "abstract": metadata.abstract,
-                "folder_id": metadata.folder_id
-            }]
+            metadatas=[updated_metadata]
         )
         
         return {"message": "Metadata updated successfully"}
@@ -356,6 +361,22 @@ async def get_paper(filename: str):
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Paper not found")
     return FileResponse(file_path)
+
+@app.get("/papers/{filename}/metadata")
+async def get_paper_metadata(filename: str):
+    """Get metadata for a specific paper."""
+    try:
+        results = collection.get(
+            ids=[filename],
+            include=["metadatas"]
+        )
+        
+        if not results["ids"]:
+            raise HTTPException(status_code=404, detail="Paper not found")
+            
+        return results["metadatas"][0]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/papers/{filename}")
 async def delete_paper(filename: str):
