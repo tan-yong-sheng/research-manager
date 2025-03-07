@@ -54,6 +54,30 @@
             background-color: #e3f2fd;
             border: 1px dashed #90caf9;
         }
+        .folder-item .dropdown-toggle::after {
+            display: none;
+        }
+        .folder-actions .dropdown-menu {
+            min-width: 120px;
+        }
+        .upload-type-menu {
+            position: absolute;
+            right: 0;
+            top: 100%;
+            z-index: 1000;
+        }
+        /* Upload button styles */
+        .upload-btn {
+            min-width: 120px;
+            text-align: left;
+        }
+        .upload-btn i {
+            margin-right: 8px;
+        }
+        .dropdown-menu-end {
+            right: 0;
+            left: auto;
+        }
     </style>
 </head>
 <body>
@@ -67,9 +91,6 @@
                 <ul class="navbar-nav">
                     <li class="nav-item">
                         <a class="nav-link" href="#" onclick="showDashboard()">Dashboard</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="#" onclick="showUploadForm()">Upload Paper</a>
                     </li>
                 </ul>
             </div>
@@ -140,18 +161,29 @@
                     </div>
 
                     <div class="row mb-4">
-                        <div class="col-md-6">
+                        <div class="col-md-5">
                             <input type="text" id="searchInput" class="form-control" placeholder="Search papers...">
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-2">
                             <select id="categoryFilter" class="form-control">
                                 <option value="">All Categories</option>
                             </select>
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-2">
                             <select id="tagFilter" class="form-control">
                                 <option value="">All Tags</option>
                             </select>
+                        </div>
+                        <div class="col-md-3 text-end">
+                            <div class="dropdown d-inline-block"></div>
+                                <button class="btn btn-outline-primary dropdown-toggle" type="button" id="uploadDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                                    <i class="bi bi-upload"></i> Upload
+                                </button>
+                                <ul class="dropdown-menu dropdown-menu-end">
+                                    <li><a class="dropdown-item" href="#" onclick="handleFileUpload()">Upload File</a></li>
+                                    <li><a class="dropdown-item" href="#" onclick="handleFolderUpload()">Upload Folder</a></li>
+                                </ul>
+                            </div>
                         </div>
                     </div>
 
@@ -280,6 +312,60 @@
                             </select>
                         </div>
                         <button type="submit" class="btn btn-primary">Move</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- File Upload Modal -->
+    <div class="modal fade" id="uploadModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="uploadModalTitle">Upload Paper</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="paperUploadForm">
+                        <input type="hidden" id="uploadFolderId">
+                        <div class="mb-3">
+                            <label for="pdfFile" class="form-label">PDF File *</label>
+                            <input type="file" class="form-control" id="pdfFile" accept=".pdf" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="title" class="form-label">Title *</label>
+                            <input type="text" class="form-control" id="title" placeholder="Enter title or leave empty to use filename">
+                        </div>
+                        <div class="mb-3">
+                            <label for="authors" class="form-label">Authors (Optional)</label>
+                            <input type="text" class="form-control" id="authors" placeholder="Enter authors">
+                        </div>
+                        <div class="mb-3">
+                            <label for="year" class="form-label">Year (Optional)</label>
+                            <input type="number" class="form-control" id="year" placeholder="Publication year">
+                        </div>
+                        <div class="mb-3">
+                            <label for="folderSelect" class="form-label">Folder (Optional)</label>
+                            <select class="form-control" id="folderSelect">
+                                <option value="default">Default Library</option>
+                                <!-- Folder options will be added here -->
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="category" class="form-label">Category (Optional)</label>
+                            <input type="text" class="form-control" id="category" placeholder="Enter category">
+                        </div>
+                        <div class="mb-3">
+                            <label for="tags" class="form-label">Tags (Optional)</label>
+                            <select class="form-control" id="tags" multiple placeholder="Add tags">
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="abstract" class="form-label">Abstract (Optional)</label>
+                            <textarea class="form-control" id="abstract" rows="3" placeholder="Enter abstract"></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Upload</button>
                     </form>
                 </div>
             </div>

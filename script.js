@@ -114,11 +114,10 @@ function renderFolder(folder, isNested = false) {
         <div class="folder-container" data-id="${folder.id}">
             <div class="folder-item d-flex justify-content-between align-items-center" 
                  data-id="${folder.id}"
-                 onclick="openFolder('${folder.id}')"
                  ondragover="handleDragOver(event)"
                  ondragleave="handleDragLeave(event)"
                  ondrop="handleDrop(event, '${folder.id}')">
-                <div>
+                <div onclick="openFolder('${folder.id}')" style="flex-grow: 1;">
                     ${hasChildren ? 
                       `<i class="bi bi-caret-right folder-toggle" onclick="toggleFolderChildren(event, '${folder.id}')"></i>` : 
                       `<i class="bi bi-dash folder-toggle invisible"></i>`}
@@ -126,8 +125,17 @@ function renderFolder(folder, isNested = false) {
                     <span class="folder-name">${folder.name}</span>
                 </div>
                 <div class="folder-actions">
-                    <i class="bi bi-pencil-square" onclick="editFolder(event, '${folder.id}')"></i>
-                    <i class="bi bi-trash" onclick="deleteFolder(event, '${folder.id}')"></i>
+                    <div class="dropdown d-inline-block">
+                        <button class="btn btn-sm btn-link text-dark p-0 mx-1" type="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-upload"></i>
+                        </button>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="#" onclick="showUploadModal('${folder.id}', 'file')">Upload File</a></li>
+                            <li><a class="dropdown-item" href="#" onclick="showUploadModal('${folder.id}', 'folder')">Upload Folder</a></li>
+                        </ul>
+                    </div>
+                    <i class="bi bi-pencil-square mx-1" onclick="editFolder(event, '${folder.id}')"></i>
+                    <i class="bi bi-trash mx-1" onclick="deleteFolder(event, '${folder.id}')"></i>
                 </div>
             </div>
             ${hasChildren ? 
@@ -594,11 +602,37 @@ async function loadTags() {
 $('#paperUploadForm').submit(async function(e) {
     e.preventDefault();
     
+    const files = $('#pdfFile')[0].files;
+    const folderId = $('#uploadFolderId').val();
+    
+    // Handle multiple files (folder upload)
+    if (files.length > 1) {
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            if (file.type === 'application/pdf') {
+                await uploadSingleFile(file, folderId);
+            }
+        }
+    } else {
+        // Single file upload
+        await uploadSingleFile(files[0], folderId);
+    }
+    
+    // Close modal and refresh view
+    bootstrap.Modal.getInstance('#uploadModal').hide();
+    if (currentFolderId) {
+        loadPapersInFolder(currentFolderId);
+    } else {
+        loadDashboard();
+    }
+});
+
+async function uploadSingleFile(file, folderId) {
     const formData = new FormData();
-    formData.append('file', $('#pdfFile')[0].files[0]);
+    formData.append('file', file);
     
     const metadata = {
-        title: $('#title').val() || $('#pdfFile')[0].files[0].name,
+        title: $('#title').val() || file.name,
         authors: $('#authors').val(),
         year: $('#year').val() ? parseInt($('#year').val()) : null,
         category: $('#category').val() || null,
@@ -608,8 +642,7 @@ $('#paperUploadForm').submit(async function(e) {
     
     formData.append('metadata', JSON.stringify(metadata));
     
-    // Add folder_id if selected
-    const folderId = $('#folderSelect').val();
+    // Add folder_id
     if (folderId) {
         formData.append('folder_id', folderId);
     }
@@ -620,19 +653,15 @@ $('#paperUploadForm').submit(async function(e) {
             body: formData
         });
         
-        if (response.ok) {
-            alert('Paper uploaded successfully!');
-            this.reset();
-            showDashboard();
-        } else {
+        if (!response.ok) {
             const error = await response.json();
             throw new Error(error.detail || 'Upload failed');
         }
     } catch (error) {
-        console.error('Error uploading paper:', error);
-        alert('Failed to upload paper: ' + error.message);
+        console.error('Error uploading file:', error);
+        alert(`Failed to upload ${file.name}: ${error.message}`);
     }
-});
+}
 
 // View paper
 async function viewPaper(filename) {
@@ -866,4 +895,35 @@ async function filterByTag(tag) {
     } catch (error) {
         console.error('Error filtering by tag:', error);
     }
+}
+
+// Upload handling functions
+function handleFileUpload() {
+    // Set file input for single file upload
+    $('#pdfFile').removeAttr('webkitdirectory');
+    $('#pdfFile').removeAttr('directory');
+    $('#pdfFile').removeAttr('multiple');
+    
+    // Clear the form
+    $('#paperUploadForm')[0].reset();
+    $('#uploadFolderId').val(currentFolderId || 'default');
+    
+    // Show upload form directly in the dashboard
+    $('#uploadForm').show();
+    $('#dashboard').hide();
+}
+
+function handleFolderUpload() {
+    // Set file input for folder upload
+    $('#pdfFile').attr('webkitdirectory', '');
+    $('#pdfFile').attr('directory', '');
+    $('#pdfFile').attr('multiple', '');
+    
+    // Clear the form
+    $('#paperUploadForm')[0].reset();
+    $('#uploadFolderId').val(currentFolderId || 'default');
+    
+    // Show upload form directly in the dashboard
+    $('#uploadForm').show();
+    $('#dashboard').hide();
 }
