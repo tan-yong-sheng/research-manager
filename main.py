@@ -549,11 +549,14 @@ async def create_folder(folder: FolderCreate):
     """Create a new folder"""
     folders_data = load_folders()
     
-    # Validate parent folder if specified
-    if folder.parent_id:
-        parent_exists = any(f["id"] == folder.parent_id for f in folders_data["folders"])
-        if not parent_exists:
-            raise HTTPException(status_code=404, detail="Parent folder not found")
+    # Check if folder with same name already exists at the same level
+    existing_folders = folders_data["folders"]
+    for existing_folder in existing_folders:
+        if existing_folder["name"].lower() == folder.name.lower() and existing_folder["parent_id"] == folder.parent_id:
+            raise HTTPException(
+                status_code=409,
+                detail="A folder with this name already exists at this level"
+            )
     
     # Create new folder with UUID
     new_folder = {
@@ -586,9 +589,22 @@ async def update_folder(folder_id: str, folder_update: FolderUpdate):
     if folder_index is None:
         raise HTTPException(status_code=404, detail="Folder not found")
     
-    # Update folder fields
+    # Get folder's current state
     current_folder = folders_data["folders"][folder_index]
     
+    # Check for duplicate name only if name is being updated
+    if folder_update.name is not None and folder_update.name != current_folder["name"]:
+        parent_id = folder_update.parent_id if folder_update.parent_id is not None else current_folder["parent_id"]
+        for existing_folder in folders_data["folders"]:
+            if (existing_folder["name"].lower() == folder_update.name.lower() and 
+                existing_folder["parent_id"] == parent_id and 
+                existing_folder["id"] != folder_id):
+                raise HTTPException(
+                    status_code=409,
+                    detail="A folder with this name already exists at this level"
+                )
+    
+    # Update folder fields
     if folder_update.name is not None:
         current_folder["name"] = folder_update.name
     

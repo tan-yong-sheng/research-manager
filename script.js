@@ -372,9 +372,16 @@ async function saveFolder() {
                 body: JSON.stringify(folderData)
             });
         }
+
+        if (response.status === 409) {
+            // Handle duplicate folder name error
+            alert('A folder with this name already exists. Please choose a different name.');
+            return;
+        }
         
         if (!response.ok) {
-            throw new Error(isNew ? "Failed to create folder" : "Failed to update folder");
+            const errorData = await response.json();
+            throw new Error(errorData.detail || (isNew ? "Failed to create folder" : "Failed to update folder"));
         }
         
         // Reload folders
