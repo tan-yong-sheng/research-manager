@@ -498,6 +498,10 @@ async function movePaperToFolder(filename, folderId) {
             
             if (originalFolderExists) {
                 targetFolderId = metadata.original_folder_id;
+            } else {
+                // Show reminder that file will be moved to Default folder
+                alert(`The original folder no longer exists. The file will be moved to Default Library.`);
+                targetFolderId = 'default';
             }
         }
 
