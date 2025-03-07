@@ -590,45 +590,76 @@ async function loadTags() {
 }
 
 // Handle paper upload
-$('#paperUploadForm').submit(async function(e) {
+$('#modalUploadForm').submit(async function(e) {
     e.preventDefault();
     
-    const files = $('#pdfFile')[0].files;
-    const folderId = $('#uploadFolderId').val();
+    // Get file specifically from the modal form
+    const files = $('#modal_pdfFile')[0].files;
     
-    // Handle multiple files (folder upload)
-    if (files.length > 1) {
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            if (file.type === 'application/pdf') {
-                await uploadSingleFile(file, folderId);
-            }
-        }
-    } else {
-        // Single file upload
-        await uploadSingleFile(files[0], folderId);
+    if (!files || files.length === 0) {
+        alert('Please select a file to upload');
+        return;
     }
     
-    // Close modal and refresh view
-    bootstrap.Modal.getInstance('#uploadModal').hide();
-    if (currentFolderId) {
-        loadPapersInFolder(currentFolderId);
-    } else {
-        loadDashboard();
+    // Show loading spinner and disable submit button
+    $('#uploadSpinner').show();
+    $('#uploadFormFields').css('opacity', '0.5');
+    $('#uploadSubmitBtn').prop('disabled', true);
+    
+    // Get folder ID from the hidden field (fix: was getting from wrong field)
+    const folderId = $('#modal_uploadFolderId').val();
+    
+    try {
+        // Handle multiple files (folder upload)
+        if (files.length > 1) {
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                if (file.type === 'application/pdf') {
+                    await uploadSingleFile(file, folderId);
+                }
+            }
+        } else {
+            // Single file upload
+            await uploadSingleFile(files[0], folderId);
+        }
+        
+        // Close modal and refresh view
+        bootstrap.Modal.getInstance('#uploadModal').hide();
+        if (currentFolderId) {
+            loadPapersInFolder(currentFolderId);
+        } else {
+            loadDashboard();
+        }
+        
+        // Show success message
+        alert('Upload completed successfully');
+    } catch (error) {
+        console.error('Error during upload:', error);
+        alert('Upload failed: ' + error.message);
+    } finally {
+        // Hide loading spinner and enable submit button
+        $('#uploadSpinner').hide();
+        $('#uploadFormFields').css('opacity', '1');
+        $('#uploadSubmitBtn').prop('disabled', false);
     }
 });
 
 async function uploadSingleFile(file, folderId) {
+    if (!file) {
+        throw new Error('No file selected');
+    }
+
     const formData = new FormData();
     formData.append('file', file);
     
+    // Get values from the modal form specifically using the new IDs
     const metadata = {
-        title: $('#title').val() || file.name,
-        authors: $('#authors').val(),
-        year: $('#year').val() ? parseInt($('#year').val()) : null,
-        category: $('#category').val() || null,
-        tags: $('#tags').val() || [],
-        abstract: $('#abstract').val() || ""
+        title: $('#modal_title').val() || file.name,
+        authors: $('#modal_authors').val(),
+        year: $('#modal_year').val() ? parseInt($('#modal_year').val()) : null,
+        category: $('#modal_category').val() || null,
+        tags: $('#modal_tags').val() || [],
+        abstract: $('#modal_abstract').val() || ""
     };
     
     formData.append('metadata', JSON.stringify(metadata));
@@ -638,20 +669,17 @@ async function uploadSingleFile(file, folderId) {
         formData.append('folder_id', folderId);
     }
     
-    try {
-        const response = await fetch(`${API_URL}/papers/`, {
-            method: 'POST',
-            body: formData
-        });
-        
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Upload failed');
-        }
-    } catch (error) {
-        console.error('Error uploading file:', error);
-        alert(`Failed to upload ${file.name}: ${error.message}`);
+    const response = await fetch(`${API_URL}/papers/`, {
+        method: 'POST',
+        body: formData
+    });
+    
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Upload failed');
     }
+    
+    return response.json();
 }
 
 // View paper
@@ -901,30 +929,66 @@ async function filterByTag(tag) {
 // Upload handling functions
 function handleFileUpload() {
     // Set file input for single file upload
-    $('#pdfFile').removeAttr('webkitdirectory');
-    $('#pdfFile').removeAttr('directory');
-    $('#pdfFile').removeAttr('multiple');
+    $('#modal_pdfFile').removeAttr('webkitdirectory');
+    $('#modal_pdfFile').removeAttr('directory');
+    $('#modal_pdfFile').removeAttr('multiple');
     
     // Clear the form
-    $('#paperUploadForm')[0].reset();
-    $('#uploadFolderId').val(currentFolderId || 'default');
+    $('#modalUploadForm')[0].reset();
+    $('#modal_uploadFolderId').val(currentFolderId || 'default');
     
-    // Show upload form directly in the dashboard
-    $('#uploadForm').show();
-    $('#dashboard').hide();
+    // Initialize Select2 for tags
+    $('#modal_tags').select2({
+        tags: true,
+        tokenSeparators: [',', ' '],
+        dropdownParent: $('#uploadModal'),
+        placeholder: 'Add tags...'
+    });
+    
+    // Load existing tags
+    loadTagsForModal();
+    
+    // Show the upload modal
+    new bootstrap.Modal('#uploadModal').show();
 }
 
 function handleFolderUpload() {
     // Set file input for folder upload
-    $('#pdfFile').attr('webkitdirectory', '');
-    $('#pdfFile').attr('directory', '');
-    $('#pdfFile').attr('multiple', '');
+    $('#modal_pdfFile').attr('webkitdirectory', '');
+    $('#modal_pdfFile').attr('directory', '');
+    $('#modal_pdfFile').attr('multiple', '');
     
     // Clear the form
-    $('#paperUploadForm')[0].reset();
-    $('#uploadFolderId').val(currentFolderId || 'default');
+    $('#modalUploadForm')[0].reset();
+    $('#modal_uploadFolderId').val(currentFolderId || 'default');
     
-    // Show upload form directly in the dashboard
-    $('#uploadForm').show();
-    $('#dashboard').hide();
+    // Initialize Select2 for tags
+    $('#modal_tags').select2({
+        tags: true,
+        tokenSeparators: [',', ' '],
+        dropdownParent: $('#uploadModal'),
+        placeholder: 'Add tags...'
+    });
+    
+    // Load existing tags
+    loadTagsForModal();
+    
+    // Show the upload modal
+    new bootstrap.Modal('#uploadModal').show();
+}
+
+// New function to load tags specifically for the modal
+async function loadTagsForModal() {
+    try {
+        const response = await fetch(`${API_URL}/stats`);
+        const stats = await response.json();
+        
+        const tagsSelect = $('#modal_tags');
+        tagsSelect.empty();
+        stats.tags.forEach(tag => {
+            tagsSelect.append(new Option(tag, tag));
+        });
+    } catch (error) {
+        console.error('Error loading tags:', error);
+    }
 }

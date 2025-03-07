@@ -327,45 +327,52 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <form id="paperUploadForm">
-                        <input type="hidden" id="uploadFolderId">
-                        <div class="mb-3">
-                            <label for="pdfFile" class="form-label">PDF File *</label>
-                            <input type="file" class="form-control" id="pdfFile" accept=".pdf" required>
+                    <form id="modalUploadForm">
+                        <input type="hidden" id="modal_uploadFolderId">
+                        <div id="uploadSpinner" style="display: none;" class="text-center my-3">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Uploading paper...</p>
                         </div>
-                        <div class="mb-3">
-                            <label for="title" class="form-label">Title *</label>
-                            <input type="text" class="form-control" id="title" placeholder="Enter title or leave empty to use filename">
+                        <div id="uploadFormFields">
+                            <div class="mb-3">
+                                <label for="modal_pdfFile" class="form-label">PDF File *</label>
+                                <input type="file" class="form-control" id="modal_pdfFile" accept=".pdf" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="modal_title" class="form-label">Title *</label>
+                                <input type="text" class="form-control" id="modal_title" placeholder="Enter title or leave empty to use filename">
+                            </div>
+                            <div class="mb-3">
+                                <label for="modal_authors" class="form-label">Authors (Optional)</label>
+                                <input type="text" class="form-control" id="modal_authors" placeholder="Enter authors">
+                            </div>
+                            <div class="mb-3">
+                                <label for="modal_year" class="form-label">Year (Optional)</label>
+                                <input type="number" class="form-control" id="modal_year" placeholder="Publication year">
+                            </div>
+                            <div class="mb-3">
+                                <label for="modal_folderSelect" class="form-label">Folder (Optional)</label>
+                                <select class="form-control" id="modal_folderSelect">
+                                    <option value="default">Default Library</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="modal_category" class="form-label">Category (Optional)</label>
+                                <input type="text" class="form-control" id="modal_category" placeholder="Enter category">
+                            </div>
+                            <div class="mb-3">
+                                <label for="modal_tags" class="form-label">Tags (Optional)</label>
+                                <select class="form-control" id="modal_tags" multiple placeholder="Add tags">
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="modal_abstract" class="form-label">Abstract (Optional)</label>
+                                <textarea class="form-control" id="modal_abstract" rows="3" placeholder="Enter abstract"></textarea>
+                            </div>
+                            <button type="submit" class="btn btn-primary" id="uploadSubmitBtn">Upload</button>
                         </div>
-                        <div class="mb-3">
-                            <label for="authors" class="form-label">Authors (Optional)</label>
-                            <input type="text" class="form-control" id="authors" placeholder="Enter authors">
-                        </div>
-                        <div class="mb-3">
-                            <label for="year" class="form-label">Year (Optional)</label>
-                            <input type="number" class="form-control" id="year" placeholder="Publication year">
-                        </div>
-                        <div class="mb-3">
-                            <label for="folderSelect" class="form-label">Folder (Optional)</label>
-                            <select class="form-control" id="folderSelect">
-                                <option value="default">Default Library</option>
-                                <!-- Folder options will be added here -->
-                            </select>
-                        </div>
-                        <div class="mb-3">
-                            <label for="category" class="form-label">Category (Optional)</label>
-                            <input type="text" class="form-control" id="category" placeholder="Enter category">
-                        </div>
-                        <div class="mb-3">
-                            <label for="tags" class="form-label">Tags (Optional)</label>
-                            <select class="form-control" id="tags" multiple placeholder="Add tags">
-                            </select>
-                        </div>
-                        <div class="mb-3">
-                            <label for="abstract" class="form-label">Abstract (Optional)</label>
-                            <textarea class="form-control" id="abstract" rows="3" placeholder="Enter abstract"></textarea>
-                        </div>
-                        <button type="submit" class="btn btn-primary">Upload</button>
                     </form>
                 </div>
             </div>
