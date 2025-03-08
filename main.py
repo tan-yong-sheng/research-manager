@@ -1,4 +1,11 @@
 import os
+import sqlite3
+import threading
+import time
+import json
+import re
+import uuid
+import shutil
 from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Body, Query
 from fastapi.responses import FileResponse, HTMLResponse
@@ -6,14 +13,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import chromadb
 from pypdf import PdfReader
-import shutil
 from datetime import datetime
 from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv
-import json
-import re
-import uuid
+
+# Import the embedding service
+from embedding_service import EmbeddingService
 
 # Load environment variables
 load_dotenv()
@@ -40,11 +46,15 @@ app.add_middleware(
 chroma_client = chromadb.PersistentClient(path="db")
 
 # Create collection for research papers
-collection = chroma_client.get_or_create_collection(name="research_papers")
+collection = chroma_client.get_or_create_collection(name=os.getenv("CHROMA_COLLECTION_NAME", "research_papers"))
 
 # Ensure research_papers directory exists
 UPLOAD_DIR = "research_papers"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# Initialize and start the embedding service
+embedding_service = EmbeddingService.get_instance()
+embedding_service.start()
 
 # Define models
 class PaperMetadata(BaseModel):
@@ -72,6 +82,55 @@ class FolderUpdate(BaseModel):
     name: Optional[str] = None
     parent_id: Optional[str] = None
     description: Optional[str] = None
+
+# New models for ChromaDB API
+class CollectionCreate(BaseModel):
+    name: str
+    metadata: Optional[Dict[str, Any]] = None
+    
+class CollectionUpdate(BaseModel):
+    metadata: Dict[str, Any]
+
+class DocumentModel(BaseModel):
+    id: str
+    document: str
+    metadata: Optional[Dict[str, Any]] = None
+    
+class DocumentsAdd(BaseModel):
+    documents: List[str]
+    metadatas: Optional[List[Dict[str, Any]]] = None
+    ids: List[str]
+    
+class DocumentsUpdate(BaseModel):
+    ids: List[str]
+    documents: Optional[List[str]] = None
+    metadatas: Optional[List[Dict[str, Any]]] = None
+    
+class QueryRequest(BaseModel):
+    query_texts: Optional[List[str]] = None
+    query_embeddings: Optional[List[List[float]]] = None
+    n_results: int = 10
+    where: Optional[Dict[str, Any]] = None
+    where_document: Optional[Dict[str, Any]] = None
+
+# API endpoint to get queue status
+@app.get("/api/embedding-queue/status")
+async def get_embedding_queue_status():
+    """Get the status of the embedding processing queue"""
+    return embedding_service.get_queue_status()
+
+# API endpoint to manually trigger processing for a file
+@app.post("/api/embedding-queue/process")
+async def trigger_embedding_process(file_path: str):
+    """Manually add a file to the embedding processing queue"""
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    if not file_path.endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    
+    success = embedding_service.queue_file(file_path)
+    return {"success": success, "message": "File added to processing queue"}
 
 # Initialize folder storage
 FOLDER_FILE = "folders.json"
@@ -133,7 +192,7 @@ def extract_text_from_pdf(file_path: str) -> str:
 def get_embedding(text: str) -> List[float]:
     """Generate embeddings using OpenAI's API."""
     response = client.embeddings.create(
-        model="text-embedding-ada-002",
+        model=os.getenv("EMBEDDING_MODEL", "text-embedding-ada-002"),
         input=text
     )
     return response.data[0].embedding
@@ -164,6 +223,29 @@ def ensure_unique_filename(base_filename: str, directory: str) -> str:
         
     return filename
 
+# Group documents by base filename
+def group_documents_by_base_filename(documents):
+    """Group documents by extracting base filename from chunked IDs (file_0, file_1, etc.)"""
+    grouped_docs = {}
+    
+    for doc in documents:
+        doc_id = doc.get("filename", "")
+        # Match pattern like "filename_0.pdf", "filename_1.pdf"
+        base_match = re.match(r'^(.+?)(?:_\d+)?(\.[^.]+)$', doc_id)
+        if base_match:
+            base_filename = base_match.group(1) + base_match.group(2)
+            if base_filename not in grouped_docs:
+                grouped_docs[base_filename] = []
+            
+            grouped_docs[base_filename].append(doc)
+        else:
+            # If no match (not a chunked file), use the whole ID as base
+            if doc_id not in grouped_docs:
+                grouped_docs[doc_id] = []
+            grouped_docs[doc_id].append(doc)
+    
+    return grouped_docs
+
 # Serve the main index.html page
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
@@ -177,95 +259,173 @@ app.mount("/static", StaticFiles(directory="."), name="static")
 
 @app.get("/stats")
 async def get_stats():
-    """Get statistics about the paper collection"""
+    """Get statistics about the paper collection, accounting for chunked documents."""
     try:
         results = collection.get(include=["metadatas"])
-        papers = results["metadatas"] if results["metadatas"] else []
+        if not results["metadatas"]:
+            return {
+                "total_papers": 0,
+                "categories": {},
+                "tags": [],
+                "years": {}
+            }
+        
+        # Group documents by base filename
+        seen_files = set()
+        unique_papers = []
+        
+        for metadata in results["metadatas"]:
+            # Extract base filename without the chunk number
+            filename = metadata.get("filename", "")
+            base_match = re.match(r'^(.+?)(?:_\d+)?(\.[^.]+)$', filename)
+            
+            if base_match:
+                base_filename = base_match.group(1) + base_match.group(2)
+            else:
+                base_filename = filename
+            
+            # Only include each base filename once
+            if base_filename not in seen_files:
+                unique_papers.append(metadata)
+                seen_files.add(base_filename)
+        
+        # Collect stats from unique papers
+        total_papers = len(unique_papers)
+        categories = {}
+        tags = set()
+        years = {}
+        
+        for paper in unique_papers:
+            # Count categories
+            category = paper.get("category")
+            if category:
+                categories[category] = categories.get(category, 0) + 1
+                
+            # Collect unique tags - handle JSON string format
+            paper_tags = paper.get("tags", "[]")
+            if isinstance(paper_tags, str):
+                try:
+                    parsed_tags = json.loads(paper_tags)
+                    if isinstance(parsed_tags, list):
+                        tags.update(parsed_tags)
+                except json.JSONDecodeError:
+                    pass
+            elif isinstance(paper_tags, list):
+                tags.update(paper_tags)
+            
+            # Count papers by year
+            year = paper.get("year")
+            if year:
+                years[year] = years.get(year, 0) + 1
+        
+        return {
+            "total_papers": total_papers,
+            "categories": categories,
+            "tags": list(tags),
+            "years": years
+        }
     except Exception as e:
-        # Return empty stats if there's an error or empty collection
+        print(f"Error in get_stats: {str(e)}")
+        # Return empty stats if there's an error
         return {
             "total_papers": 0,
             "categories": {},
             "tags": [],
             "years": {}
         }
-    
-    # Collect stats
-    total_papers = len(papers)
-    categories = {}
-    tags = set()
-    years = {}
-    
-    for paper in papers:
-        # Count categories
-        category = paper.get("category")
-        if category:
-            categories[category] = categories.get(category, 0) + 1
-            
-        # Collect unique tags - handle JSON string format
-        paper_tags = paper.get("tags", "[]")
-        if isinstance(paper_tags, str):
-            try:
-                # Parse JSON string to list
-                parsed_tags = json.loads(paper_tags)
-                if isinstance(parsed_tags, list):
-                    tags.update(parsed_tags)
-            except json.JSONDecodeError:
-                print(f"Warning: Could not parse tags JSON: {paper_tags}")
-        elif isinstance(paper_tags, list):
-            tags.update(paper_tags)
-        
-        # Count papers by year
-        year = paper.get("year")
-        if year:
-            years[year] = years.get(year, 0) + 1
-    
-    return {
-        "total_papers": total_papers,
-        "categories": categories,
-        "tags": list(tags),
-        "years": years
-    }
 
 @app.get("/papers/by-tag/{tag}")
 async def get_papers_by_tag(tag: str):
-    """Get papers with specific tag"""
+    """Get papers with specific tag, grouping chunked documents."""
     try:
         results = collection.get(include=["metadatas"])
-        papers = []
-        for paper in results["metadatas"]:
+        if not results["metadatas"]:
+            return {"papers": []}
+        
+        # Filter by tag and handle chunks
+        unique_papers = []
+        seen_files = set()
+        
+        for metadata in results["metadatas"]:
             # Skip papers that are in the trash folder
-            if paper.get("folder_id") == "trash":
+            if metadata.get("folder_id") == "trash":
                 continue
-                
-            paper_tags = paper.get("tags", "[]")
-            # Parse tags if they're stored as JSON string
+            
+            # Check if tag is in paper's tags
+            paper_tags = metadata.get("tags", "[]")
+            has_tag = False
+            
             if isinstance(paper_tags, str):
                 try:
                     parsed_tags = json.loads(paper_tags)
                     if isinstance(parsed_tags, list) and tag in parsed_tags:
-                        papers.append(paper)
+                        has_tag = True
                 except json.JSONDecodeError:
-                    print(f"Warning: Could not parse tags JSON: {paper_tags}")
+                    continue
             elif isinstance(paper_tags, list) and tag in paper_tags:
-                papers.append(paper)
+                has_tag = True
+            
+            if has_tag:
+                # Extract base filename without the chunk number
+                filename = metadata.get("filename", "")
+                base_match = re.match(r'^(.+?)(?:_\d+)?(\.[^.]+)$', filename)
+                
+                if base_match:
+                    base_filename = base_match.group(1) + base_match.group(2)
+                else:
+                    base_filename = filename
+                
+                # Only include each base filename once
+                if base_filename not in seen_files:
+                    # Use a copy of the metadata with the base filename
+                    paper_metadata = dict(metadata)
+                    paper_metadata["filename"] = base_filename
+                    
+                    # Only include complete entries
+                    if "title" in paper_metadata:
+                        unique_papers.append(paper_metadata)
+                        seen_files.add(base_filename)
+        
+        return {"papers": unique_papers}
     except Exception as e:
         print(f"Error in get_papers_by_tag: {str(e)}")
-        papers = []
-    return {"papers": papers}
+        return {"papers": []}
 
 @app.get("/papers/by-category/{category}")
 async def get_papers_by_category(category: str):
-    """Get papers in specific category"""
+    """Get papers in specific category, grouping chunked documents."""
     try:
         results = collection.get(include=["metadatas"])
-        papers = [
-            paper for paper in results["metadatas"]
-            if paper.get("category") == category and paper.get("folder_id") != "trash"
-        ]
+        if not results["metadatas"]:
+            return {"papers": []}
+        
+        # Filter by category and handle chunks
+        unique_papers = []
+        seen_files = set()
+        
+        for metadata in results["metadatas"]:
+            # Check category and trash status
+            if metadata.get("category") == category and metadata.get("folder_id") != "trash":
+                # Extract base filename without the chunk number
+                filename = metadata.get("filename", "")
+                base_match = re.match(r'^(.+?)(?:_\d+)?(\.[^.]+)$', filename)
+                
+                if base_match:
+                    base_filename = base_match.group(1) + base_match.group(2)
+                else:
+                    base_filename = filename
+                
+                # Only include each base filename once
+                if base_filename not in seen_files:
+                    # Use a copy of the metadata with the base filename
+                    paper_metadata = dict(metadata)
+                    paper_metadata["filename"] = base_filename
+                    unique_papers.append(paper_metadata)
+                    seen_files.add(base_filename)
+        
+        return {"papers": unique_papers}
     except Exception:
-        papers = []
-    return {"papers": papers}
+        return {"papers": []}
 
 async def check_file_exists(filename: str) -> bool:
     """Check if a file with the given filename exists in any folder."""
@@ -280,7 +440,8 @@ async def upload_paper(
     file: UploadFile = File(...),
     metadata: Optional[str] = Form(None),
     folder_id: Optional[str] = Form('default'),  # Default to 'default' folder
-    override: bool = Form(False)  # New parameter to handle overrides
+    override: bool = Form(False),  # New parameter to handle overrides
+    use_pipeline: bool = Form(True)  # Whether to use the embedding pipeline or not
 ):
     """Upload a research paper and store its embedding."""
     if not file.filename.endswith('.pdf'):
@@ -325,117 +486,198 @@ async def upload_paper(
     file_path = os.path.join(UPLOAD_DIR, sanitized_filename)
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-    
-    # Extract text and generate embedding
-    try:
-        text = extract_text_from_pdf(file_path)
-        
-        # Ensure the text is not empty
-        if not text.strip():
-            # Clean up file if text extraction fails
-            os.remove(file_path)
-            raise ValueError("No text could be extracted from the PDF file.")
-        
-        # Truncate text if it's too long (OpenAI has token limits)
-        # Roughly 8000 chars is about 2000 tokens which is a safe limit
-        if len(text) > 8000:
-            text = text[:8000]
-            
-        embedding = get_embedding(text)
-        
-        # Prepare sanitized metadata for ChromaDB
-        sanitized_metadata = {
-            "filename": sanitized_filename,  # Store the new filename
-            "upload_date": str(datetime.now()),
-            "title": metadata_dict.get('title', sanitized_filename),
-            "authors": metadata_dict.get('authors', "")
-        }
-        
-        # Add folder_id to metadata, defaulting to 'default'
-        sanitized_metadata["folder_id"] = folder_id
-        
-        # Handle keywords (convert list to JSON string if needed)
-        keywords = metadata_dict.get('keywords', [])
-        if isinstance(keywords, list):
-            sanitized_metadata["keywords"] = json.dumps(keywords)
-        else:
-            sanitized_metadata["keywords"] = "[]"
-            
-        # Handle tags (convert list to JSON string if needed)
-        tags = metadata_dict.get('tags', [])
-        if isinstance(tags, list):
-            sanitized_metadata["tags"] = json.dumps(tags)
-        else:
-            sanitized_metadata["tags"] = "[]"
-        
-        # Handle abstract
-        sanitized_metadata["abstract"] = metadata_dict.get('abstract', "")
-        
-        # Handle year field (must be int or str, not None)
-        year = metadata_dict.get('year')
-        if year is not None:
-            sanitized_metadata["year"] = year
-        
-        # Handle category field (must be str, not None)
-        category = metadata_dict.get('category')
-        if category is not None and category != "":
-            sanitized_metadata["category"] = category
 
-        # Delete existing document if overriding
-        if override:
-            try:
-                collection.delete(ids=[sanitized_filename])
-            except Exception:
-                pass
+    # Prepare sanitized metadata for ChromaDB
+    sanitized_metadata = {
+        "filename": sanitized_filename,  # Store the new filename
+        "upload_date": str(datetime.now()),
+        "title": metadata_dict.get('title', sanitized_filename),
+        "authors": metadata_dict.get('authors', "")
+    }
+    
+    # Add folder_id to metadata, defaulting to 'default'
+    sanitized_metadata["folder_id"] = folder_id
+    
+    # Handle keywords (convert list to JSON string if needed)
+    keywords = metadata_dict.get('keywords', [])
+    if isinstance(keywords, list):
+        sanitized_metadata["keywords"] = json.dumps(keywords)
+    else:
+        sanitized_metadata["keywords"] = "[]"
         
-        # Store in ChromaDB
-        collection.add(
-            documents=[text],
-            embeddings=[embedding],
-            metadatas=[sanitized_metadata],
-            ids=[sanitized_filename]  # Use the new filename as ID
-        )
-        return {"message": "Paper uploaded successfully", "filename": sanitized_filename}
-    except Exception as e:
-        # Clean up file if processing fails
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        raise HTTPException(status_code=500, detail=str(e))
+    # Handle tags (convert list to JSON string if needed)
+    tags = metadata_dict.get('tags', [])
+    if isinstance(tags, list):
+        sanitized_metadata["tags"] = json.dumps(tags)
+    else:
+        sanitized_metadata["tags"] = "[]"
+    
+    # Handle abstract
+    sanitized_metadata["abstract"] = metadata_dict.get('abstract', "")
+    
+    # Handle year field (must be int or str, not None)
+    year = metadata_dict.get('year')
+    if year is not None:
+        sanitized_metadata["year"] = year
+    
+    # Handle category field (must be str, not None)
+    category = metadata_dict.get('category')
+    if category is not None and category != "":
+        sanitized_metadata["category"] = category
+    
+    if use_pipeline:
+        # Add to embedding pipeline queue with metadata
+        embedding_service.queue_file(file_path, sanitized_metadata)
+        return {"message": "Paper uploaded successfully and queued for embedding", "filename": sanitized_filename}
+    else:
+        # Legacy direct embedding approach
+        try:
+            # Extract text and generate embedding
+            text = extract_text_from_pdf(file_path)
+            
+            # Ensure the text is not empty
+            if not text.strip():
+                # Clean up file if text extraction fails
+                os.remove(file_path)
+                raise ValueError("No text could be extracted from the PDF file.")
+            
+            # Truncate text if it's too long (OpenAI has token limits)
+            # Roughly 8000 chars is about 2000 tokens which is a safe limit
+            if len(text) > 8000:
+                text = text[:8000]
+                
+            embedding = get_embedding(text)
+            
+            # Delete existing document if overriding
+            if override:
+                try:
+                    collection.delete(ids=[sanitized_filename])
+                except Exception:
+                    pass
+            
+            # Store in ChromaDB
+            collection.add(
+                documents=[text],
+                embeddings=[embedding],
+                metadatas=[sanitized_metadata],
+                ids=[sanitized_filename]  # Use the new filename as ID
+            )
+            return {"message": "Paper uploaded successfully", "filename": sanitized_filename}
+        except Exception as e:
+            # Clean up file if processing fails
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/papers/{filename}/metadata")
 async def update_paper_metadata(filename: str, metadata: Dict[str, Any]):
     """Update paper metadata"""
     try:
-        # Get existing metadata
-        results = collection.get(
-            ids=[filename],
-            include=["metadatas", "documents", "embeddings"]
-        )
+        filename_with_ext = f"{filename}.pdf" if not filename.lower().endswith('.pdf') else filename
+
+        # First try exact match
+        results = collection.get(ids=[filename_with_ext], include=["metadatas"])
         
-        if not results["ids"]:
+        if results["ids"]:
+            # Found exact match, update it
+            updated_metadata = dict(results["metadatas"][0])
+            
+            # Update the common metadata fields
+            if "title" in metadata:
+                updated_metadata["title"] = metadata["title"]
+            if "authors" in metadata:
+                updated_metadata["authors"] = metadata["authors"]
+            if "year" in metadata:
+                updated_metadata["year"] = metadata["year"]
+            if "category" in metadata:
+                updated_metadata["category"] = metadata["category"]
+            if "abstract" in metadata:
+                updated_metadata["abstract"] = metadata["abstract"]
+            if "folder_id" in metadata:
+                updated_metadata["folder_id"] = metadata["folder_id"]
+            
+            # Handle tags specially - ensure they're stored as JSON string
+            if "tags" in metadata:
+                tags = metadata["tags"]
+                if isinstance(tags, list):
+                    updated_metadata["tags"] = json.dumps(tags)
+                elif isinstance(tags, str):
+                    # If it's already a JSON string, validate it
+                    try:
+                        json.loads(tags)
+                        updated_metadata["tags"] = tags
+                    except json.JSONDecodeError:
+                        updated_metadata["tags"] = "[]"
+                else:
+                    updated_metadata["tags"] = "[]"
+            
+            # Update in ChromaDB
+            collection.update(
+                ids=[filename_with_ext],
+                metadatas=[updated_metadata]
+            )
+            
+            return {"message": "Metadata updated successfully"}
+        
+        # If no exact match, try pattern matching for chunked files
+        all_results = collection.get(include=["metadatas"])
+        if not all_results["ids"]:
+            raise HTTPException(status_code=404, detail="Paper not found")
+            
+        # Extract base name and extension for pattern matching
+        name_part, ext_part = os.path.splitext(filename_with_ext)
+        chunk_pattern = f"^{re.escape(name_part)}(_\\d+)?{re.escape(ext_part)}$"
+        
+        # Find all chunks for this paper
+        chunk_ids = []
+        chunk_metadatas = []
+        for i, doc_id in enumerate(all_results["ids"]):
+            if re.match(chunk_pattern, doc_id):
+                chunk_ids.append(doc_id)
+                if i < len(all_results["metadatas"]):
+                    chunk_metadatas.append(all_results["metadatas"][i])
+        
+        if not chunk_ids:
             raise HTTPException(status_code=404, detail="Paper not found")
         
-        # Update metadata while preserving existing data
-        existing_metadata = results["metadatas"][0]
-        
-        # Convert None values to appropriate types for ChromaDB
-        updated_metadata = {
-            "filename": filename,
-            "upload_date": existing_metadata["upload_date"],
-            "title": metadata.get("title") or existing_metadata.get("title", ""),
-            "authors": metadata.get("authors") or existing_metadata.get("authors", ""),
-            "year": metadata.get("year") if metadata.get("year") is not None else existing_metadata.get("year", ""),
-            "category": metadata.get("category") or existing_metadata.get("category", ""),
-            "tags": json.dumps(metadata.get("tags", [])),  # Convert tags list to JSON string
-            "abstract": metadata.get("abstract") or existing_metadata.get("abstract", ""),
-            "folder_id": metadata.get("folder_id") or existing_metadata.get("folder_id", "default")
-        }
-        
-        # Update in ChromaDB
-        collection.update(
-            ids=[filename],
-            metadatas=[updated_metadata]
-        )
+        # Update metadata for all chunks
+        for chunk_id, current_metadata in zip(chunk_ids, chunk_metadatas):
+            updated_metadata = dict(current_metadata)
+            
+            # Update the common metadata fields
+            if "title" in metadata:
+                updated_metadata["title"] = metadata["title"]
+            if "authors" in metadata:
+                updated_metadata["authors"] = metadata["authors"]
+            if "year" in metadata:
+                updated_metadata["year"] = metadata["year"]
+            if "category" in metadata:
+                updated_metadata["category"] = metadata["category"]
+            if "abstract" in metadata:
+                updated_metadata["abstract"] = metadata["abstract"]
+            if "folder_id" in metadata:
+                updated_metadata["folder_id"] = metadata["folder_id"]
+            
+            # Handle tags specially - ensure they're stored as JSON string
+            if "tags" in metadata:
+                tags = metadata["tags"]
+                if isinstance(tags, list):
+                    updated_metadata["tags"] = json.dumps(tags)
+                elif isinstance(tags, str):
+                    # If it's already a JSON string, validate it
+                    try:
+                        json.loads(tags)
+                        updated_metadata["tags"] = tags
+                    except json.JSONDecodeError:
+                        updated_metadata["tags"] = "[]"
+                else:
+                    updated_metadata["tags"] = "[]"
+            
+            # Update the chunk in ChromaDB
+            collection.update(
+                ids=[chunk_id],
+                metadatas=[updated_metadata]
+            )
         
         return {"message": "Metadata updated successfully"}
     except Exception as e:
@@ -443,17 +685,47 @@ async def update_paper_metadata(filename: str, metadata: Dict[str, Any]):
 
 @app.get("/papers/")
 async def list_papers():
-    """List all stored papers."""
+    """List all stored papers, grouping chunked documents."""
     try:
         results = collection.get(include=["metadatas"])
-        return {"papers": results["metadatas"] if results["metadatas"] else []}
-    except Exception:
+        if not results["metadatas"]:
+            return {"papers": []}
+        
+        # Get unique papers by handling chunked documents
+        unique_papers = []
+        seen_files = set()
+        
+        for metadata in results["metadatas"]:
+            # Extract base filename without the chunk number (e.g. file_0.pdf -> file.pdf)
+            filename = metadata.get("filename", "")
+            base_match = re.match(r'^(.+?)(?:_\d+)?(\.[^.]+)$', filename)
+            
+            if base_match:
+                base_filename = base_match.group(1) + base_match.group(2)
+            else:
+                base_filename = filename
+            
+            # Only include each base filename once
+            if base_filename not in seen_files:
+                # Use a copy of the metadata with the base filename
+                paper_metadata = dict(metadata)
+                paper_metadata["filename"] = base_filename
+                
+                # Only include complete entries
+                if "title" in paper_metadata and "folder_id" in paper_metadata:
+                    unique_papers.append(paper_metadata)
+                    seen_files.add(base_filename)
+        
+        return {"papers": unique_papers}
+    except Exception as e:
+        print(f"Error listing papers: {str(e)}")
         return {"papers": []}
 
 @app.get("/papers/{filename}")
 async def get_paper(filename: str):
     """Download a specific paper."""
-    file_path = os.path.join(UPLOAD_DIR, filename)
+    filename_with_ext = f"{filename}.pdf" if not filename.lower().endswith('.pdf') else filename
+    file_path = os.path.join(UPLOAD_DIR, filename_with_ext)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Paper not found")
     return FileResponse(file_path)
@@ -462,50 +734,158 @@ async def get_paper(filename: str):
 async def get_paper_metadata(filename: str):
     """Get metadata for a specific paper."""
     try:
-        results = collection.get(
-            ids=[filename],
-            include=["metadatas"]
-        )
-        
+        filename_with_ext = f"{filename}.pdf" if not filename.lower().endswith('.pdf') else filename
+            
+        # Get all documents
+        results = collection.get(include=["metadatas"])
+        print(results)
         if not results["ids"]:
             raise HTTPException(status_code=404, detail="Paper not found")
             
-        return results["metadatas"][0]
+        # Find exact match first
+        for i, doc_id in enumerate(results["ids"]):
+            if doc_id == filename_with_ext:
+                metadata = dict(results["metadatas"][i])
+                
+                # Parse JSON strings to proper arrays
+                if isinstance(metadata.get("tags"), str):
+                    try:
+                        metadata["tags"] = json.loads(metadata["tags"])
+                    except json.JSONDecodeError:
+                        metadata["tags"] = []
+                        
+                metadata["filename"] = os.path.splitext(filename_with_ext)[0]  # Return without extension
+                return metadata
+                
+        # If no exact match, try matching base name
+        name_part = filename.rstrip('.pdf')
+        chunk_pattern = f"^{re.escape(name_part)}(_\\d+)?\.pdf$"
+        
+        # Find the first chunk that matches our pattern
+        for i, doc_id in enumerate(results["ids"]):
+            if re.match(chunk_pattern, doc_id):
+                metadata = dict(results["metadatas"][i])
+                
+                # Parse JSON strings to proper arrays
+                if isinstance(metadata.get("tags"), str):
+                    try:
+                        metadata["tags"] = json.loads(metadata["tags"])
+                    except json.JSONDecodeError:
+                        metadata["tags"] = []
+                        
+                # Return filename without extension
+                metadata["filename"] = name_part
+                return metadata
+        
+        raise HTTPException(status_code=404, detail="Paper not found")
+    except HTTPException:
+        raise
     except Exception as e:
+        print(f"Error getting paper metadata: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/papers/{filename}")
 async def delete_paper(filename: str, soft_delete: bool = True):
-    """Delete a paper. If soft_delete=True, moves it to trash folder, otherwise permanently deletes it."""
+    """Delete a paper and its chunks. If soft_delete=True, moves to trash folder."""
     try:
-        # Get existing metadata first
+        # Get all documents
+        results = collection.get(include=["metadatas"])
+        print(results)
+        if not results["ids"]:
+            raise HTTPException(status_code=404, detail="Paper not found")
+        
+        # Find matching chunk IDs
+        chunk_ids = []
+        chunk_indices = []
+        for i, doc_id in enumerate(results["ids"]):
+            if doc_id == filename:  # Try exact match first
+                chunk_ids.append(doc_id)
+                chunk_indices.append(i)
+                break
+                
+        # If no exact match found, try matching chunks
+        if not chunk_ids:
+            name_part = filename.rstrip('.pdf')
+            chunk_pattern = f"^{re.escape(name_part)}(_\\d+)?\.pdf$"
+            for i, doc_id in enumerate(results["ids"]):
+                if re.match(chunk_pattern, doc_id):
+                    chunk_ids.append(doc_id)
+                    chunk_indices.append(i)
+                    
+        if not chunk_ids:
+            raise HTTPException(status_code=404, detail="Paper not found")
+        
+        file_path = os.path.join(UPLOAD_DIR, f"{filename}.pdf")
+        
+        if soft_delete and (not results["metadatas"][chunk_indices[0]].get("folder_id") or 
+                          results["metadatas"][chunk_indices[0]].get("folder_id") != "trash"):
+            # Move all chunks to trash folder
+            for chunk_id, idx in zip(chunk_ids, chunk_indices):
+                current_metadata = results["metadatas"][idx]
+                # Store original folder_id and move to trash
+                updated_metadata = dict(current_metadata)
+                updated_metadata["original_folder_id"] = updated_metadata.get("folder_id")
+                updated_metadata["folder_id"] = "trash"
+                collection.update(
+                    ids=[chunk_id],
+                    metadatas=[updated_metadata]
+                )
+            return {"message": f"Paper '{filename}' moved to trash"}
+        else:
+            # Hard delete - remove all chunks from database and physical file
+            collection.delete(ids=chunk_ids)
+            
+            # Delete the file if it exists
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                
+            return {"message": f"Paper '{filename}' permanently deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting paper: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete paper: {str(e)}")
+
+@app.put("/papers/{filename}/move")
+async def move_paper(filename: str, folder_id: Optional[str] = None):
+    """Move a paper to a different folder"""
+    # Validate folder if specified
+    if folder_id:
+        folders_data = load_folders()
+        folder_exists = any(f["id"] == folder_id for f in folders_data["folders"])
+        if not folder_exists:
+            raise HTTPException(status_code=404, detail="Folder not found")
+    
+    try:
+        filename_with_ext = f"{filename}.pdf" if not filename.lower().endswith('.pdf') else filename
+        
+        # Get existing metadata
         results = collection.get(
-            ids=[filename],
+            ids=[filename_with_ext],
             include=["metadatas"]
         )
         
         if not results["ids"]:
             raise HTTPException(status_code=404, detail="Paper not found")
         
-        current_metadata = results["metadatas"][0]
-        file_path = os.path.join(UPLOAD_DIR, filename)
+        # Update metadata with new folder
+        metadata = results["metadatas"][0]
         
-        if soft_delete and current_metadata.get("folder_id") != "trash":
-            # Store original folder_id and move to trash
-            current_metadata["original_folder_id"] = current_metadata.get("folder_id")
-            current_metadata["folder_id"] = "trash"
-            collection.update(
-                ids=[filename],
-                metadatas=[current_metadata]
-            )
-            return {"message": "Paper moved to trash"}
-        else:
-            # Hard delete - remove from database and file system
-            collection.delete(ids=[filename])
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            return {"message": "Paper permanently deleted"}
+        # If moving to trash, store original folder
+        if folder_id == "trash" and metadata.get("folder_id") != "trash":
+            metadata["original_folder_id"] = metadata.get("folder_id")
+        # If moving out of trash, remove original folder reference
+        elif metadata.get("folder_id") == "trash":
+            metadata.pop("original_folder_id", None)
             
+        metadata["folder_id"] = folder_id
+        
+        collection.update(
+            ids=[filename_with_ext],
+            metadatas=[metadata]
+        )
+        
+        return {"message": "Paper moved successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -592,6 +972,9 @@ async def update_folder(folder_id: str, folder_update: FolderUpdate):
     
     if folder_index is None:
         raise HTTPException(status_code=404, detail="Folder not found")
+    
+    # Get folder's current state
+    current_folder = folders_data["folders"][folder_index]
     
     # Get folder's current state
     current_folder = folders_data["folders"][folder_index]
@@ -701,61 +1084,53 @@ async def delete_folder(
 
 @app.get("/papers/by-folder/{folder_id}")
 async def get_papers_by_folder(folder_id: str):
-    """Get papers in a specific folder"""
+    """Get papers in a specific folder, grouping chunked documents."""
     try:
         results = collection.get(include=["metadatas"])
-        papers = []
+        if not results["metadatas"]:
+            return {"papers": []}
         
-        for paper in results["metadatas"]:
-            # Check if paper is in this folder
-            paper_folder_id = paper.get("folder_id")
-            if paper_folder_id == folder_id:
-                papers.append(paper)
-    except Exception:
-        papers = []
+        # Group papers by folder and handle chunks
+        unique_papers = []
+        seen_files = set()
         
-    return {"papers": papers}
-
-@app.put("/papers/{filename}/move")
-async def move_paper(filename: str, folder_id: Optional[str] = None):
-    """Move a paper to a different folder"""
-    # Validate folder if specified
-    if folder_id:
-        folders_data = load_folders()
-        folder_exists = any(f["id"] == folder_id for f in folders_data["folders"])
-        if not folder_exists:
-            raise HTTPException(status_code=404, detail="Folder not found")
-    
-    try:
-        # Get existing metadata
-        results = collection.get(
-            ids=[filename],
-            include=["metadatas"]
-        )
+        for metadata in results["metadatas"]:
+            # Only include papers in the requested folder
+            if metadata.get("folder_id") == folder_id:
+                # Extract base filename without the chunk number
+                filename = metadata.get("filename", "")
+                base_match = re.match(r'^(.+?)(?:_\d+)?(\.[^.]+)$', filename)
+                
+                if base_match:
+                    base_filename = base_match.group(1) + base_match.group(2)
+                else:
+                    base_filename = filename
+                
+                # Only include each base filename once
+                if base_filename not in seen_files:
+                    # Use a copy of the metadata
+                    paper_metadata = dict(metadata)
+                    # Parse JSON strings that need to be arrays
+                    if isinstance(paper_metadata.get("tags"), str):
+                        try:
+                            paper_metadata["tags"] = json.loads(paper_metadata["tags"])
+                        except json.JSONDecodeError:
+                            paper_metadata["tags"] = []
+                            
+                    paper_metadata["filename"] = base_filename
+                    unique_papers.append(paper_metadata)
+                    seen_files.add(base_filename)
         
-        if not results["ids"]:
-            raise HTTPException(status_code=404, detail="Paper not found")
-        
-        # Update metadata with new folder
-        metadata = results["metadatas"][0]
-        
-        # If moving to trash, store original folder
-        if folder_id == "trash" and metadata.get("folder_id") != "trash":
-            metadata["original_folder_id"] = metadata.get("folder_id")
-        # If moving out of trash, remove original folder reference
-        elif metadata.get("folder_id") == "trash":
-            metadata.pop("original_folder_id", None)
-            
-        metadata["folder_id"] = folder_id
-        
-        collection.update(
-            ids=[filename],
-            metadatas=[metadata]
-        )
-        
-        return {"message": "Paper moved successfully"}
+        return {"papers": unique_papers}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error listing papers by folder: {str(e)}")
+        return {"papers": []}
+
+# Shutdown handler for cleaning up resources
+@app.on_event("shutdown")
+async def shutdown_event():
+    # Stop the embedding pipeline
+    embedding_service.stop()
 
 if __name__ == "__main__":
     import uvicorn

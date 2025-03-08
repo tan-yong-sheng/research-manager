@@ -1020,25 +1020,28 @@ async function deletePaper(filename, isTrashItem = false) {
     }
     
     try {
-        const response = await fetch(`${API_URL}/papers/${filename}?soft_delete=${!isTrashItem}`, {
+        // Fix: Use isTrashItem correctly to determine soft_delete value and encode it properly
+        const response = await fetch(`${API_URL}/papers/${encodeURIComponent(filename)}?soft_delete=${isTrashItem ? 'false' : 'true'}`, {
             method: 'DELETE'
         });
         
-        if (response.ok) {
-            alert(isTrashItem ? 'Paper permanently deleted' : 'Paper moved to trash');
-            
-            // Refresh the current view
-            if (currentFolderId) {
-                loadPapersInFolder(currentFolderId);
-            } else {
-                loadDashboard();
-            }
+        if (!response.ok) {
+            const errorData = await response.text();
+            console.error('Delete response:', response.status, errorData);
+            throw new Error(`Delete failed: ${errorData}`);
+        }
+        
+        alert(isTrashItem ? 'Paper permanently deleted' : 'Paper moved to trash');
+        
+        // Refresh the current view
+        if (currentFolderId) {
+            loadPapersInFolder(currentFolderId);
         } else {
-            throw new Error('Delete failed');
+            loadDashboard();
         }
     } catch (error) {
         console.error('Error deleting paper:', error);
-        alert('Failed to delete paper');
+        alert('Failed to delete paper: ' + error.message);
     }
 }
 
